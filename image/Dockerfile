@@ -7,6 +7,11 @@
 ARG HERMES_TAG
 FROM nousresearch/hermes-agent:${HERMES_TAG}
 
+# ARG declarado antes do FROM sai de escopo depois dele. Sem redeclarar, o
+# LABEL com a tag do upstream sairia VAZIO — e a imagem perderia a unica
+# prova de qual versao do Hermes ela carrega.
+ARG HERMES_TAG
+
 USER root
 
 # --- Admin API (plano B: acesso tecnico da assessoria) ---------------------
