@@ -14,7 +14,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/hermes-whitelabel
-  HERMES_TAG: "2026.9.14"   # tag do upstream FIXADA; nunca :latest
+  # Tag do upstream FIXADA; nunca :latest. As tags reais do Docker Hub tem
+  # prefixo "v" (v2026.9.21) — sem o "v" o build falha com "not found".
+  HERMES_TAG: "v2026.9.21"
 
 jobs:
   testes:

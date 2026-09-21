@@ -2,7 +2,9 @@
 # NAO e' um fork: o core fica intacto e atualiza por `docker pull` de uma tag
 # nova na linha FROM. Toda customizacao entra por plugin, skill, skin e config.
 
-ARG HERMES_TAG=latest
+# Sem default proposital: build sem --build-arg HERMES_TAG falha na hora,
+# em vez de assar :latest e mudar de versao sozinho no proximo build.
+ARG HERMES_TAG
 FROM nousresearch/hermes-agent:${HERMES_TAG}
 
 USER root
