@@ -1,0 +1,13 @@
+#!/command/with-contenv sh
+# Admin API supervisionada pelo s6, irma do gateway no mesmo container.
+#
+# Bind em 0.0.0.0 porque o proxy do EasyPanel fala com o container pela rede
+# docker, de fora dele — 127.0.0.1 aqui seria inalcancavel. A porta NAO e'
+# publicada no host: quem expoe e' o proxy, num dominio proprio.
+# A protecao real e' o bearer token + allowlist de IP dentro do app, que
+# falham fechados se nao estiverem configurados.
+exec /opt/hermes/.venv/bin/python -m uvicorn app:app \
+  --app-dir /opt/admin-api \
+  --host 0.0.0.0 \
+  --port "${ADMIN_API_PORT:-8777}" \
+  --no-access-log

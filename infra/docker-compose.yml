@@ -1,0 +1,59 @@
+# infra/docker-compose.yml — plataforma white-label sobre Hermes
+# Base (Traefik + Postgres) + um serviço por cliente.
+# Clientes novos entram em infra/clients/<slug>.yml e sao incluidos via
+# COMPOSE_FILE (ver infra/.env.example).
+
+name: hermes-platform
+
+networks:
+  edge:
+    name: hermes-edge
+  db:
+    name: hermes-db
+    internal: true          # Postgres inalcancavel a partir da internet/host
+
+volumes:
+  pgdata:
+  traefik-acme:
+
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/acme/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/acme
+    networks: [edge]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB:-app}
+      POSTGRES_USER: ${PG_SUPERUSER:-platform}
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?defina PG_SUPERUSER_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    networks: [db]
+    # sem `ports:` — nada de 5432 publicado. Acesso admin via
+    # `docker compose exec postgres psql` ou tunel SSH.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_SUPERUSER:-platform} -d ${PG_DB:-app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

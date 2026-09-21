@@ -1,0 +1,43 @@
+# infra/clients/urban.yml — instancia do cliente piloto Urban
+# Sobe junto com a base:
+#   docker compose -f docker-compose.yml -f clients/urban.yml up -d hermes-urban
+
+services:
+  hermes-urban:
+    image: ${PRODUCT_IMAGE:-hermes-whitelabel}:${PRODUCT_TAG:-dev}
+    container_name: hermes-urban
+    restart: unless-stopped
+    command: gateway run
+    env_file:
+      - ${CLIENT_DATA_ROOT:-/srv/hermes}/urban/.env   # segredos: DSN, chave LLM, token API Urban
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+    volumes:
+      - ${CLIENT_DATA_ROOT:-/srv/hermes}/urban:/opt/data
+    networks: [edge, db]
+    # nada publicado no host: o Traefik fala com o container pela rede edge
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: hermes-edge
+      traefik.http.routers.urban.rule: "Host(`urban.${BASE_DOMAIN}`)"
+      traefik.http.routers.urban.entrypoints: websecure
+      traefik.http.routers.urban.tls.certresolver: le
+      traefik.http.services.urban.loadbalancer.server.port: "9119"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # limites: um cliente nao derruba os vizinhos por consumo
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

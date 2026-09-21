@@ -1,0 +1,96 @@
+name: build-image
+
+# Push na main constroi e publica a imagem. NAO faz deploy em cliente:
+# promocao e' acao explicita, por cliente, no EasyPanel. Um bug que sobe
+# para 20 instancias de uma vez e' um incidente com 20 clientes.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/hermes-whitelabel
+  HERMES_TAG: "2026.9.14"   # tag do upstream FIXADA; nunca :latest
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: instalar dependencias
+        run: |
+          pip install -r admin-api/requirements.txt \
+                      -r easypanel-proxy/requirements.txt pytest
+      - name: testes da Admin API
+        working-directory: admin-api
+        run: python -m pytest tests/ -q
+      - name: testes do EasyPanel Proxy
+        working-directory: easypanel-proxy
+        run: python -m pytest tests/ -q
+      - name: sintaxe dos scripts
+        run: |
+          for f in scripts/*.sh infra/scripts/*.sh easypanel-proxy/scripts/*.sh image/s6/*/run; do
+            bash -n "$f" && echo "ok: $f"
+          done
+
+  imagem:
+    needs: testes
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: trazer o catalogo de skills
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/hermes-whitelabel-catalog
+          token: ${{ secrets.CATALOG_TOKEN }}
+          path: product
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=staging,enable={{is_default_branch}}
+            type=semver,pattern=v{{version}}
+          # NAO ha tag :stable aqui de proposito: stable e' promocao manual,
+          # depois da verificacao em staging.
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: image/Dockerfile
+          build-args: HERMES_TAG=${{ env.HERMES_TAG }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: resumo
+        run: |
+          echo "### Imagem publicada" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Deploy automatico so em staging. Para promover um cliente:" >> $GITHUB_STEP_SUMMARY
+          echo "marque a imagem como :stable e atualize o servico dele no EasyPanel." >> $GITHUB_STEP_SUMMARY

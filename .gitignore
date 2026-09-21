@@ -1,0 +1,13 @@
+# segredos: NUNCA versionados
+*.secret
+*.token
+.env
+.env.*
+!.env.example
+cofre/
+
+# dev local
+infra/devdata/
+__pycache__/
+.pytest_cache/
+*.pyc
