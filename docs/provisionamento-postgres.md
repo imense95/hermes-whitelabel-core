@@ -91,12 +91,59 @@ interpretado.
 existem — sobrou só `plataforma-db`. Um serviço com a senha do banco no `env`
 não deve ficar no painel depois de cumprir a função.
 
+## Senha da `urban_app`: aplicada sem passar por ninguém
+
+Feito em 21/09/2026. A senha foi **gerada dentro do container**, com
+`openssl rand`, aplicada por variável de sessão do `psql`
+(`\set q :'senha'` → `ALTER ROLE ... PASSWORD :q`), e gravada apenas no
+`.env` dentro do volume de dados da própria instância
+(`hermes-whitelabel_urban_dados`, `chmod 600`, `chown 1000:1000`).
+
+**O valor nunca foi ecoado.** O log do painel é legível pelo agente, então
+imprimir a senha anularia o objetivo. Nem o agente nem este documento a
+conhecem.
+
+Três verificações antes de considerar pronto:
+
+1. `rolpassword IS NOT NULL` → a senha existe
+2. login real como `urban_app` → `current_user = urban_app`
+3. `SHOW search_path` → `urban` (o travamento continua valendo)
+
+Qualquer uma falhando aborta com `set -e` e o container reinicia em loop.
+Observado `Up About a minute` estável.
+
+### Trocar no primeiro acesso: não se aplica aqui
+
+Essa senha **não é credencial de pessoa** — é da role de serviço que o
+container usa para falar com o banco. O cliente nunca a digita e não tem onde
+trocá-la; trocar exigiria reescrever o `.env` e reiniciar a instância.
+
+A orientação de "trocar no primeiro login" pertence ao **acesso do cliente ao
+dashboard** (Keycloak), que é outra credencial, de outro fluxo. Está no
+onboarding, em `onboarding-e-acessos.md`.
+
+Rotação da senha de banco é operação de manutenção: rodar o mesmo script de
+novo gera outra senha, reescreve o `.env` e o próximo restart pega. Não é
+tarefa do cliente.
+
 ## Pendente
 
-1. **Senha da `urban_app`** — passo humano, acima.
-2. **`plataforma_admin`**: a senha foi gerada pelo EasyPanel e apareceu no
-   retorno da API (portanto passou pelo contexto do agente). Rotacione antes
-   de dados reais entrarem.
-3. **`exposedPort: 0`** está certo — o banco só é alcançável pela rede
+1. **`plataforma_admin`** — rotacionar **pelo painel**, não por API. Ver
+   abaixo.
+2. **`exposedPort: 0`** está certo — o banco só é alcançável pela rede
    interna. Não exponha para "facilitar" acesso externo; use um túnel
    pontual.
+
+### Por que a rotação do `plataforma_admin` não foi feita por API
+
+`updatePostgresCredentials` exige a senha nova **no corpo da chamada**. Gerar
+essa senha aqui a colocaria no contexto do agente — exatamente a exposição
+que a rotação pretende corrigir. Trocaria uma senha vazada por outra vazada.
+
+Reusar a senha da `urban_app` seria pior: daria ao portador do `.env` da
+Urban as credenciais de **superusuário** do banco, colapsando o isolamento
+que o schema por cliente existe para garantir.
+
+Faça no painel: `hermes-whitelabel` → `plataforma-db` → Credentials → nova
+senha. O EasyPanel redeploya o serviço sozinho. Nada mais depende dessa senha
+(a instância da Urban usa `urban_app`).

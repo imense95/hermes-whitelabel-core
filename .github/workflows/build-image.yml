@@ -52,19 +52,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # O catalogo e' repo privado separado: o GITHUB_TOKEN desta execucao
-      # NAO alcanca outro repositorio. Exige um PAT em secrets.CATALOG_TOKEN
-      # (fine-grained, so leitura de conteudo, so no repo do catalogo).
-      # Enquanto o secret nao existir a imagem sai SEM skills do produto, em
-      # vez de quebrar o build — o aviso fica no resumo da execucao.
+      # O catalogo e' repo privado separado: o GITHUB_TOKEN desta execucao NAO
+      # alcanca outro repositorio.
+      #
+      # Usamos DEPLOY KEY (ssh-key), nao PAT. Uma deploy key read-only e'
+      # escopada a UM repositorio e nao carrega a identidade de ninguem: se
+      # vazar, da leitura do catalogo e nada mais. Um PAT, mesmo
+      # fine-grained, e' credencial de usuario e expira — dia em que expira,
+      # o build passa a sair sem skills silenciosamente.
       - name: o catalogo esta acessivel?
         id: catalogo
         run: |
-          if [ -n "${{ secrets.CATALOG_TOKEN }}" ]; then
+          if [ -n "${{ secrets.CATALOG_DEPLOY_KEY }}" ]; then
             echo "tem=true" >> "$GITHUB_OUTPUT"
           else
             echo "tem=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::CATALOG_TOKEN ausente — imagem sai sem as skills do produto."
+            echo "::warning::CATALOG_DEPLOY_KEY ausente — imagem sai sem as skills do produto."
           fi
 
       - name: trazer o catalogo de skills
@@ -72,8 +75,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/hermes-whitelabel-catalog
-          token: ${{ secrets.CATALOG_TOKEN }}
+          ssh-key: ${{ secrets.CATALOG_DEPLOY_KEY }}
           path: product
+
+      # Catálogo vazio com a chave presente = algo quebrou no checkout.
+      # Falhar aqui e' melhor que publicar imagem sem skills achando que tem.
+      - name: o catalogo veio mesmo?
+        if: steps.catalogo.outputs.tem == 'true'
+        run: |
+          for d in skills plugins skins config; do
+            test -d "product/$d" || { echo "::error::product/$d ausente apos checkout"; exit 1; }
+          done
+          echo "catalogo ok: $(find product -type f | wc -l) arquivos"
 
       # O Dockerfile faz COPY dos quatro diretorios: todos precisam existir.
       - name: catalogo vazio (sem token)
@@ -120,5 +133,5 @@ jobs:
           if [ "${{ steps.catalogo.outputs.tem }}" != "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "> **Atencao:** esta imagem NAO tem as skills do produto." >> $GITHUB_STEP_SUMMARY
-            echo "> Configure o secret \`CATALOG_TOKEN\` e rode de novo." >> $GITHUB_STEP_SUMMARY
+            echo "> Configure o secret \`CATALOG_DEPLOY_KEY\` e rode de novo." >> $GITHUB_STEP_SUMMARY
           fi
