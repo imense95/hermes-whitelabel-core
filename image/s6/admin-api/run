@@ -6,7 +6,10 @@
 # publicada no host: quem expoe e' o proxy, num dominio proprio.
 # A protecao real e' o bearer token + allowlist de IP dentro do app, que
 # falham fechados se nao estiverem configurados.
-exec /opt/hermes/.venv/bin/python -m uvicorn app:app \
+#
+# Venv proprio (/opt/venv-servicos), nao o do Hermes: nossas dependencias
+# nao podem conflitar com as do core, que atualiza a cada tag nova.
+exec /opt/venv-servicos/bin/python -m uvicorn app:app \
   --app-dir /opt/admin-api \
   --host 0.0.0.0 \
   --port "${ADMIN_API_PORT:-8777}" \

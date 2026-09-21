@@ -14,11 +14,31 @@ ARG HERMES_TAG
 
 USER root
 
-# --- Admin API (plano B: acesso tecnico da assessoria) ---------------------
-# Processo separado, porta propria, nunca fala com o agente.
-COPY admin-api/requirements.txt /opt/admin-api/requirements.txt
-RUN /opt/hermes/.venv/bin/pip install --no-cache-dir -r /opt/admin-api/requirements.txt
-COPY admin-api/app.py /opt/admin-api/app.py
+# --- Admin API e proxy (plano B: acesso tecnico da assessoria) -------------
+# Processos separados, portas proprias, nunca falam com o agente.
+#
+# Venv PROPRIO, nao o do Hermes: as dependencias da nossa API nao podem
+# conflitar com as do core, e o core atualiza por baixo de nos a cada tag
+# nova. O venv do upstream (/opt/hermes/.venv) nao tem pip — e' criado com
+# uv — entao usamos uv, com ensurepip como plano B.
+COPY admin-api/requirements.txt     /opt/admin-api/requirements.txt
+COPY easypanel-proxy/requirements.txt /opt/proxy/requirements.txt
+RUN set -eu; \
+    if command -v uv >/dev/null 2>&1; then \
+        uv venv /opt/venv-servicos; \
+        VIRTUAL_ENV=/opt/venv-servicos uv pip install --no-cache \
+            -r /opt/admin-api/requirements.txt \
+            -r /opt/proxy/requirements.txt; \
+    else \
+        /opt/hermes/.venv/bin/python -m venv /opt/venv-servicos; \
+        /opt/venv-servicos/bin/python -m ensurepip --upgrade; \
+        /opt/venv-servicos/bin/pip install --no-cache-dir \
+            -r /opt/admin-api/requirements.txt \
+            -r /opt/proxy/requirements.txt; \
+    fi; \
+    /opt/venv-servicos/bin/python -c "import fastapi, uvicorn, httpx"
+COPY admin-api/app.py       /opt/admin-api/app.py
+COPY easypanel-proxy/app.py /opt/proxy/app.py
 
 # --- Catalogo do produto ---------------------------------------------------
 # Marca e comportamento. Origem unica das skills que a assessoria instala;
@@ -28,7 +48,7 @@ COPY --chown=root:root product/skills/  /opt/product/skills/
 COPY --chown=root:root product/plugins/ /opt/product/plugins/
 COPY --chown=root:root product/skins/   /opt/product/skins/
 COPY --chown=root:root product/config/  /opt/product/config/
-RUN chmod -R a-w /opt/product /opt/admin-api
+RUN chmod -R a-w /opt/product /opt/admin-api /opt/proxy
 
 # --- Supervisao ------------------------------------------------------------
 # A imagem oficial usa s6. A Admin API entra como servico irmao do gateway:
