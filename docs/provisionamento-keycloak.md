@@ -120,3 +120,25 @@ e passa a exigir login OIDC. A chave do LLM entra pela própria tela depois diss
 devolve 302 para `…/realms/urban/protocol/openid-connect/auth?client_id=hermes-dashboard&redirect_uri=…/auth/callback&code_challenge_method=S256`.
 Raiz da Urban = 302 → /login; container `Up` estável; dashboard READY na 9119.
 Pendente: chave do LLM (`provider_configured=false`) entra pela tela após o login.
+
+## PÓS-IMPORT OBRIGATÓRIO: criar o usuário do cliente (senão login falha)
+
+O `--import-realm` cria o realm e o client OIDC, **mas NENHUM usuário**. Um realm
+recém-importado tem zero usuários (`select count(*) from keycloak.user_entity
+where realm_id=<realm>` = 0). Login pela tela do cliente então falha com **"senha
+incorreta"** — mensagem enganosa: o Keycloak diz isso mesmo quando o usuário NÃO
+EXISTE (proposital, para não vazar quais usuários existem). Não é senha errada; é
+usuário ausente naquele realm.
+
+**Usuários são isolados por realm.** Um `imense` criado no realm `master` (console
+admin) NÃO existe no realm `urban`. São tabelas separadas por design.
+
+**Modelo do produto (decisão do Herbert):** realm fica FECHADO
+(`registrationAllowed=false`); **a assessoria cria os usuários manualmente pelo
+console**. Passo obrigatório após cada import de realm de cliente:
+1. Console admin do Keycloak → trocar o realm selecionado (canto sup. esq.) de
+   `master` para o realm do cliente (`urban`).
+2. Users → Add user (username, marcar **Email verified**) → Create.
+3. Credentials → Set password → **Temporary = Off**.
+A senha é definida pelo operador no console — **nunca gerada nem embutida no realm
+JSON** (passaria pelo git e pelo contexto do LLM).
