@@ -16,7 +16,10 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>("sessions");
+  const initial = (new URLSearchParams(window.location.search).get("tab") as TabId) || "sessions";
+  const [tab, setTab] = useState<TabId>(
+    TABS.some((t) => t.id === initial) ? initial : "sessions",
+  );
 
   return (
     <div className="min-h-screen">
