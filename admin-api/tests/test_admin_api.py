@@ -297,3 +297,65 @@ def test_api_sem_token_configurado_nao_atende(cli, monkeypatch):
     c, _, _, mod = cli
     monkeypatch.setattr(mod, "ADMIN_TOKEN_HASH", "")
     assert c.get("/v1/status", headers=h()).status_code == 503
+
+
+# --- plugins ---------------------------------------------------------------
+
+@pytest.fixture()
+def cli_plugins(cli, tmp_path: Path, monkeypatch):
+    c, data, catalogo, mod = cli
+    pcat = tmp_path / "catalogo-plugins"
+    (pcat / "marketing" / "motor" / "node_modules" / "pg").mkdir(parents=True)
+    (pcat / "marketing" / "motor" / "node_modules" / "pg" / "index.js").write_text("// 50MB", encoding="utf-8")
+    (pcat / "marketing" / "plugin.yaml").write_text(
+        "name: marketing\nversion: 1.0.0\nprovides_tools:\n  - marketing_config\n", encoding="utf-8")
+    (pcat / "marketing" / "__init__.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "PLUGIN_CATALOG_DIR", pcat)
+    return c, data, pcat, mod
+
+
+def test_lista_plugins_e_catalogo(cli_plugins):
+    c, data, pcat, mod = cli_plugins
+    r = c.get("/v1/plugins", headers=h())
+    assert r.status_code == 200
+    assert r.json() == {"instalados": [], "habilitados": [], "catalogo_disponivel": ["marketing"]}
+
+
+def test_instala_plugin_sem_motor_e_habilita_no_config(cli_plugins):
+    c, data, pcat, mod = cli_plugins
+    (data / "config.yaml").write_text("model: x\nplugins:\n  enabled:\n    - outro\n", encoding="utf-8")
+    r = c.post("/v1/plugins/install", json={"plugin": "marketing"}, headers=h())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["acao"] == "instalado"
+    assert body["ferramentas"] == ["marketing_config"]
+    assert body["habilitado_no_config"] is True
+    assert (data / "plugins" / "marketing" / "__init__.py").is_file()
+    assert not (data / "plugins" / "marketing" / "motor").exists(), "motor fica na imagem, nao no volume"
+    import yaml
+    cfg = yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["plugins"]["enabled"] == ["outro", "marketing"]
+    assert cfg["model"] == "x", "resto do config preservado"
+    # idempotente
+    r2 = c.post("/v1/plugins/install", json={"plugin": "marketing"}, headers=h())
+    assert r2.json()["acao"] == "atualizado"
+    assert yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8"))["plugins"]["enabled"] == ["outro", "marketing"]
+    assert c.get("/v1/plugins", headers=h()).json()["instalados"][0]["nome"] == "marketing"
+
+
+def test_instala_plugin_cria_config_se_nao_existe(cli_plugins):
+    c, data, pcat, mod = cli_plugins
+    assert not (data / "config.yaml").exists()
+    r = c.post("/v1/plugins/install", json={"plugin": "marketing"}, headers=h())
+    assert r.status_code == 200
+    import yaml
+    assert yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8")) == {"plugins": {"enabled": ["marketing"]}}
+
+
+@pytest.mark.parametrize("ruim", ["../etc", "marketing/../x", "MARKETING!"])
+def test_plugin_fora_do_catalogo_nega(cli_plugins, ruim):
+    c, *_ = cli_plugins
+    r = c.post("/v1/plugins/install", json={"plugin": ruim}, headers=h())
+    assert r.status_code in (400, 404, 422)
+    r = c.post("/v1/plugins/install", json={"plugin": "inexistente"}, headers=h())
+    assert r.status_code == 404

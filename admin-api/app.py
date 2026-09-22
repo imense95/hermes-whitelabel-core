@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field, field_validator
 
 DATA_DIR = Path(os.environ.get("HERMES_DATA_DIR", "/opt/data"))
 CATALOG_DIR = Path(os.environ.get("PRODUCT_CATALOG_DIR", "/opt/product/skills"))
+PLUGIN_CATALOG_DIR = Path(os.environ.get("PRODUCT_PLUGIN_CATALOG_DIR", "/opt/product/plugins"))
 TENANT_SLUG = os.environ.get("TENANT_SLUG", "")
 ADMIN_TOKEN_HASH = os.environ.get("ADMIN_API_TOKEN_SHA256", "")
 AUDIT_DSN = os.environ.get("ADMIN_AUDIT_DSN", "")
@@ -55,6 +56,8 @@ IP_ALLOWLIST = [x.strip() for x in os.environ.get("ADMIN_API_IP_ALLOWLIST", "").
 
 # Diretorios que a API pode tocar. Tudo fora disso e' negado por construcao.
 SKILLS_DIR = DATA_DIR / "skills"
+PLUGINS_DIR = DATA_DIR / "plugins"
+CONFIG_FILE = DATA_DIR / "config.yaml"
 LOGS_DIR = DATA_DIR / "logs"
 ENV_FILE = DATA_DIR / ".env"
 
@@ -302,6 +305,131 @@ def instalar_skill(body: InstalarSkill, op: Operador = Depends(autenticar)) -> d
         "acao": "atualizada" if ja_existia else "instalada",
         "versao": _ler_versao(destino),
         "observacao": "o agente carrega a skill na proxima sessao; nao e' preciso reiniciar",
+    }
+
+
+# --------------------------------------------------------------------------
+# Verbo 2b — plugins (mesma regra das skills: so do catalogo assado na imagem)
+# --------------------------------------------------------------------------
+#
+# Um plugin e' codigo Python carregado DENTRO do agente, entao vale a mesma
+# postura: nunca upload, so copia da arvore root-owned da imagem. Diferente
+# da skill, o Hermes so carrega plugin de usuario listado em
+# `plugins.enabled` no config.yaml — entao instalar = copiar + habilitar.
+#
+# Motores Node dentro do plugin (ex.: marketing/motor com node_modules) NAO
+# sao copiados para o volume: ficam na imagem (read-only) e o plugin os acha
+# por /opt/product/plugins/<nome>/motor. O volume recebe so o manifesto e o
+# codigo Python — pequeno, e o motor atualiza junto com a imagem.
+
+PLUGIN_NAO_COPIAR = {"motor", "node_modules", "__pycache__", "test", "tests"}
+
+
+def _ler_config_yaml() -> dict[str, Any]:
+    """Le config.yaml sem depender de PyYAML completo: so o que precisamos.
+
+    O arquivo e' do Hermes; nao reescrevemos o resto. Se nao existir ou nao
+    parsear, tratamos como vazio e criamos so a chave plugins.enabled.
+    """
+    try:
+        import yaml  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - requirements garantem
+        raise HTTPException(500, "PyYAML ausente na Admin API")
+    if not CONFIG_FILE.is_file():
+        return {}
+    try:
+        dados = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise HTTPException(500, f"config.yaml ilegivel: {e}")
+    return dados if isinstance(dados, dict) else {}
+
+
+def _habilitar_plugin_no_config(nome: str) -> bool:
+    """Garante `plugins.enabled: [..., nome]`. Devolve True se mudou algo."""
+    import yaml  # noqa: PLC0415
+    cfg = _ler_config_yaml()
+    plugins = cfg.setdefault("plugins", {})
+    if not isinstance(plugins, dict):
+        plugins = cfg["plugins"] = {}
+    enabled = plugins.get("enabled")
+    if not isinstance(enabled, list):
+        enabled = []
+    if nome in enabled:
+        return False
+    plugins["enabled"] = [*enabled, nome]
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_FILE.with_suffix(".yaml.tmp")
+    tmp.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    os.replace(tmp, CONFIG_FILE)
+    return True
+
+
+def _ler_manifesto(plugin_dir: Path) -> dict[str, Any]:
+    try:
+        import yaml  # noqa: PLC0415
+        dados = yaml.safe_load((plugin_dir / "plugin.yaml").read_text(encoding="utf-8")) or {}
+        return dados if isinstance(dados, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@app.get("/v1/plugins")
+def listar_plugins(op: Operador = Depends(autenticar)) -> dict[str, Any]:
+    instalados = []
+    if PLUGINS_DIR.is_dir():
+        for m in sorted(PLUGINS_DIR.glob("*/plugin.yaml")):
+            if m.parent.name.startswith("."):
+                continue  # .backup-<nome>-<ts> de reinstalacao nao e' plugin ativo
+            man = _ler_manifesto(m.parent)
+            instalados.append({"nome": m.parent.name, "versao": man.get("version"),
+                               "ferramentas": man.get("provides_tools", [])})
+    habilitados = _ler_config_yaml().get("plugins", {}).get("enabled", []) if CONFIG_FILE.is_file() else []
+    catalogo = sorted(p.parent.name for p in PLUGIN_CATALOG_DIR.glob("*/plugin.yaml"))         if PLUGIN_CATALOG_DIR.is_dir() else []
+    auditar(op.nome, "plugins.list", f"{len(instalados)} instalados", "ok", obrigatorio=False)
+    return {"instalados": instalados, "habilitados": habilitados if isinstance(habilitados, list) else [],
+            "catalogo_disponivel": catalogo}
+
+
+class InstalarPlugin(BaseModel):
+    plugin: str = Field(min_length=2, max_length=64)
+
+    @field_validator("plugin")
+    @classmethod
+    def _slug(cls, v: str) -> str:
+        if not SLUG_RE.match(v):
+            raise ValueError("nome de plugin invalido")
+        return v
+
+
+@app.post("/v1/plugins/install")
+def instalar_plugin(body: InstalarPlugin, op: Operador = Depends(autenticar)) -> dict[str, Any]:
+    origem = (PLUGIN_CATALOG_DIR / body.plugin).resolve()
+    if not str(origem).startswith(str(PLUGIN_CATALOG_DIR.resolve()) + os.sep):
+        auditar(op.nome, "plugins.install", body.plugin, "erro", "fora do catalogo", obrigatorio=False)
+        raise HTTPException(400, "plugin fora do catalogo")
+    if not (origem / "plugin.yaml").is_file():
+        auditar(op.nome, "plugins.install", body.plugin, "erro", "nao existe no catalogo", obrigatorio=False)
+        raise HTTPException(404, f"plugin '{body.plugin}' nao esta no catalogo do produto")
+
+    destino = PLUGINS_DIR / body.plugin
+    ja_existia = destino.exists()
+    auditar(op.nome, "plugins.install",
+            f"{body.plugin} ({'atualizacao' if ja_existia else 'instalacao'})", "ok", obrigatorio=True)
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    if ja_existia:
+        shutil.move(str(destino), str(PLUGINS_DIR / f".backup-{body.plugin}-{int(time.time())}"))
+    shutil.copytree(origem, destino, ignore=shutil.ignore_patterns(*PLUGIN_NAO_COPIAR))
+    habilitou = _habilitar_plugin_no_config(body.plugin)
+
+    man = _ler_manifesto(destino)
+    return {
+        "plugin": body.plugin,
+        "acao": "atualizado" if ja_existia else "instalado",
+        "versao": man.get("version"),
+        "ferramentas": man.get("provides_tools", []),
+        "habilitado_no_config": habilitou or body.plugin in (_ler_config_yaml().get("plugins", {}).get("enabled") or []),
+        "observacao": "plugin carrega na proxima sessao do agente; reinicie o gateway para valer em canais ja abertos",
     }
 
 

@@ -48,6 +48,25 @@ COPY --chown=root:root product/skills/  /opt/product/skills/
 COPY --chown=root:root product/plugins/ /opt/product/plugins/
 COPY --chown=root:root product/skins/   /opt/product/skins/
 COPY --chown=root:root product/config/  /opt/product/config/
+
+# --- Motores Node dos plugins do catalogo ----------------------------------
+# A imagem upstream ja traz node + ffmpeg (usados pelo proprio Hermes), entao
+# so instalamos as dependencias de cada plugin que tiver package-lock.json.
+# `npm ci --omit=dev`: reproduzivel (lock) e sem ferramentas de teste na
+# imagem. Fica root-owned e read-only como o resto do catalogo; o estado
+# mutavel dos motores (jobs, temporarios) vai para /opt/data via
+# MARKETING_STATE_DIR / TMPDIR, nunca para dentro de /opt/product.
+RUN set -eu; \
+    for lock in /opt/product/plugins/*/motor/package-lock.json; do \
+        [ -f "$lock" ] || continue; \
+        d="$(dirname "$lock")"; echo "npm ci em $d"; \
+        (cd "$d" && npm ci --omit=dev --no-audit --no-fund --loglevel=error); \
+        rm -rf "$d/test"; \
+    done; \
+    npm cache clean --force 2>/dev/null || true; \
+    if [ -f /opt/product/plugins/marketing/motor/agent/hermes/cli.js ]; then \
+        cd /opt/product/plugins/marketing/motor && node agent/hermes/cli.js | grep -q marketing_config; \
+    fi
 RUN chmod -R a-w /opt/product /opt/admin-api /opt/proxy
 
 # --- Supervisao ------------------------------------------------------------
