@@ -73,3 +73,36 @@ Depois: uma entrada no calendário + `gerar` → `Saídas/<data>/` com 4 PNGs,
 ## O que fica de fora da v1 (decidido)
 Telegram para aprovação, publicação no Instagram, WhatsApp/Baileys, vídeo.
 O código original está em `motor/agent/hermes/tools.original.js` para a v2.
+
+## Feito na Urban em 2026-09-22 — profile isolado (REGRA a partir daqui)
+
+**Toda skill universal nasce em profile próprio na instância do cliente**
+(mesma lógica de isolamento por pasta do Bot Mode, feita à mão porque o Bot
+Mode visual não existe na web). Script idempotente:
+`infra/scripts/ativar-marketing-profile.sh` (roda DENTRO do container:
+`docker exec -i <urban> sh -s < script`). O que ele faz:
+
+1. `hermes profile create marketing --no-skills` → `/opt/data/profiles/marketing/`
+   com memória/sessões/skills/plugins vazios.
+2. `.env` do profile: `DATABASE_URL` e `ANTHROPIC_API_KEY` copiados do `.env`
+   do default por shell; `GEMINI_API_KEY` + `MARKETING_GOOGLE_*` lidos do env
+   do processo (EasyPanel); **`API_SERVER_KEY` própria** (`openssl rand -hex 32`)
+   — cifra o refresh token do Drive; `MARKETING_STATE_DIR` para jobs.
+3. Plugin (sem `motor/`) + skill copiados para dentro do profile;
+   `plugins.enabled: [marketing]` via `hermes -p marketing config set`.
+4. `SOUL.md` com a persona do bot.
+5. `hermes gateway restart` — o gateway multiplexa (`gateway.multiplex_profiles: true`
+   já vinha no config): `hermes profile list` → `marketing … running`;
+   `hermes gateway status` → `marketing/api_server: …/p/marketing/v1`.
+
+Dashboard do bot: `https://<urban>/?profile=marketing` (mesmo login Keycloak).
+
+**Armadilha encontrada:** `password authentication failed for user "urban_app"`
+— a senha da role no Postgres não batia com a `DATABASE_URL` do `.env`
+(mesmo padrão do Keycloak). O default da Urban nunca tinha usado o banco, por
+isso passou despercebido. Fix: `infra/scripts/sync-senha-role-cliente.sh` no
+host (lê a URL dentro do container → `ALTER ROLE … :'pw'`). **Ao provisionar
+cliente novo, provar a conexão com a role dele antes de dar por pronto.**
+
+Provado no dia: `status` criou as 7 tabelas no schema `urban`; `conectar_drive`
+devolveu código de device flow real do Google (app OAuth OK).
