@@ -58,7 +58,7 @@ export function ChoiceCards({
                 "flex flex-col items-start rounded-md border p-4 text-left transition",
                 active
                   ? "border-primary bg-primary-light ring-1 ring-primary"
-                  : "border-stroke bg-white hover:border-primary hover:bg-primary-light/40",
+                  : "border-stroke bg-panel hover:border-primary hover:bg-primary-light/40",
                 disabled || busy ? "cursor-not-allowed opacity-70" : "",
               ].join(" ")}
             >

@@ -4,6 +4,7 @@ import { ChatArea } from "./components/ChatArea";
 import { SettingsModal } from "./components/SettingsModal";
 import { SearchModal } from "./components/SearchModal";
 import { NewProjectModal } from "./components/NewProjectModal";
+import { initTheme } from "./lib/theme";
 
 // Títulos das sessões mock (para o cabeçalho do chat). Em produção vem da API.
 const TITLES: Record<string, string> = {
@@ -18,6 +19,12 @@ const TITLES: Record<string, string> = {
 // sidebar de conversas + área de chat central + modais (config, busca, projeto).
 export default function App() {
   const params = new URLSearchParams(window.location.search);
+  // Deep-link opcional de tema para testes (?theme=dark|light). Persiste via hook.
+  const t = params.get("theme");
+  if (t === "dark" || t === "light") {
+    localStorage.setItem("hermes-theme", t);
+    initTheme();
+  }
   const [session, setSession] = useState<string | null>(params.get("s"));
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(params.get("settings") === "1");

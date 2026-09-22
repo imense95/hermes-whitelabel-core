@@ -2,7 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { handleCallback } from "./lib/auth";
+import { initTheme } from "./lib/theme";
 import "./index.css";
+
+initTheme(); // aplica o tema salvo antes do render (evita flash)
+
 
 // Rota de callback do OIDC (Authorization Code + PKCE). Ao voltar do Keycloak,
 // finaliza o login e redireciona para a raiz.

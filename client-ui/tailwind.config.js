@@ -1,28 +1,41 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
-      // Tokens semânticos espelhando o demo AIChat da Tailgrids.
+      // Tokens semânticos → variáveis CSS (ver :root e .dark em index.css).
+      // Formato de canais RGB para o <alpha-value> (ex.: bg-primary/15) funcionar.
       colors: {
         background: {
-          DEFAULT: "#f4f5f7", // fundo cinza atrás do painel branco
-          50: "#f9fafb",
-          100: "#f3f4f6",
+          DEFAULT: "rgb(var(--background) / <alpha-value>)",
+          50: "rgb(var(--background-50) / <alpha-value>)",
+          100: "rgb(var(--background-100) / <alpha-value>)",
         },
-        title: { DEFAULT: "#111827", 50: "#1f2937" },
+        title: {
+          DEFAULT: "rgb(var(--title) / <alpha-value>)",
+          50: "rgb(var(--title-50) / <alpha-value>)",
+        },
         text: {
-          200: "#374151",
-          100: "#4b5563",
-          50: "#6b7280",
+          200: "rgb(var(--text-200) / <alpha-value>)",
+          100: "rgb(var(--text-100) / <alpha-value>)",
+          50: "rgb(var(--text-50) / <alpha-value>)",
         },
-        stroke: { DEFAULT: "#e5e7eb", light: "#f0f1f3" },
-        primary: { DEFAULT: "#4f46e5", hover: "#4338ca", light: "#eef2ff" },
-        claude: "#d97757",
+        stroke: {
+          DEFAULT: "rgb(var(--stroke) / <alpha-value>)",
+          light: "rgb(var(--stroke-light) / <alpha-value>)",
+        },
+        primary: {
+          DEFAULT: "rgb(var(--primary) / <alpha-value>)",
+          hover: "rgb(var(--primary-hover) / <alpha-value>)",
+          light: "rgb(var(--primary-light) / <alpha-value>)",
+        },
+        claude: "rgb(var(--claude) / <alpha-value>)",
+        panel: "rgb(var(--panel) / <alpha-value>)",
         // compat com componentes antigos
-        body: "#6b7280",
-        dark: "#111827",
-        surface: "#f9fafb",
+        body: "rgb(var(--text-50) / <alpha-value>)",
+        dark: "rgb(var(--title) / <alpha-value>)",
+        surface: "rgb(var(--background-50) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],

@@ -23,7 +23,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-pop"
+        className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-2xl bg-panel shadow-pop"
         onClick={(e) => e.stopPropagation()}
       >
         <nav className="w-52 shrink-0 border-r border-stroke bg-background p-3">

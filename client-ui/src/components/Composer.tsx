@@ -51,7 +51,7 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
   const current = models.find((m) => m.id === model);
 
   return (
-    <div className="rounded-2.5xl border border-stroke bg-white p-2 shadow-composer">
+    <div className="rounded-2.5xl border border-stroke bg-panel p-2 shadow-composer">
       <textarea
         ref={taRef}
         rows={1}
@@ -83,7 +83,7 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
               <SlidersHorizontal size={16} /> Ferramentas
             </button>
             {toolsOpen && (
-              <div className="absolute bottom-11 left-0 z-10 w-52 rounded-xl border border-stroke bg-white p-1 shadow-pop">
+              <div className="absolute bottom-11 left-0 z-10 w-52 rounded-xl border border-stroke bg-panel p-1 shadow-pop">
                 {TOOLS.map(({ id, label, Icon }) => (
                   <button key={id} onClick={() => toggleTool(id)} className="menu-item">
                     <Icon size={16} /> {label}
@@ -117,7 +117,7 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
               <ChevronDown size={15} className="text-text-50" />
             </button>
             {pickOpen && (
-              <div className="absolute bottom-11 right-0 z-10 w-60 rounded-xl border border-stroke bg-white p-1 shadow-pop">
+              <div className="absolute bottom-11 right-0 z-10 w-60 rounded-xl border border-stroke bg-panel p-1 shadow-pop">
                 {models.map((m) => (
                   <button
                     key={m.id}

@@ -47,7 +47,7 @@ export function ChatArea({ sessionId, title }: { sessionId: string | null; title
   const empty = !sessionId && msgs.length === 0;
 
   return (
-    <section className="relative flex h-full flex-1 flex-col rounded-2xl bg-white shadow-panel">
+    <section className="relative flex h-full flex-1 flex-col rounded-2xl bg-panel shadow-panel">
       {!empty && (
         <div className="flex items-center justify-between border-b border-stroke px-6 py-3">
           <span className="truncate text-sm font-medium text-title">{title || "Conversa"}</span>
@@ -57,7 +57,7 @@ export function ChatArea({ sessionId, title }: { sessionId: string | null; title
                 <MoreHorizontal size={18} />
               </button>
               {menuOpen && (
-                <div className="absolute right-0 top-10 z-20 w-52 rounded-xl border border-stroke bg-white p-1 shadow-pop">
+                <div className="absolute right-0 top-10 z-20 w-52 rounded-xl border border-stroke bg-panel p-1 shadow-pop">
                   <button className="menu-item"><Pin size={16} /> Fixar</button>
                   <button className="menu-item"><PencilLine size={16} /> Renomear</button>
                   <button className="menu-item"><FolderInput size={16} /> Mover para projeto</button>
@@ -65,7 +65,7 @@ export function ChatArea({ sessionId, title }: { sessionId: string | null; title
                 </div>
               )}
             </div>
-            <button className="flex items-center gap-2 rounded-lg bg-title px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+            <button className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover">
               <Share2 size={15} /> Compartilhar
             </button>
           </div>

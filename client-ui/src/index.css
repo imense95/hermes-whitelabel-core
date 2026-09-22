@@ -4,6 +4,44 @@
 @tailwind utilities;
 
 @layer base {
+  /* Tema claro (padrão) — canais RGB, um por token semântico. */
+  :root {
+    --background: 244 245 247;   /* #f4f5f7 fundo atrás do painel */
+    --background-50: 249 250 251;
+    --background-100: 243 244 246;
+    --title: 17 24 39;           /* #111827 */
+    --title-50: 31 41 55;
+    --text-200: 55 65 81;
+    --text-100: 75 85 99;
+    --text-50: 107 114 128;
+    --stroke: 229 231 235;
+    --stroke-light: 240 241 243;
+    --primary: 79 70 229;        /* #4f46e5 índigo */
+    --primary-hover: 67 56 202;
+    --primary-light: 238 242 255;
+    --claude: 217 119 87;        /* #d97757 */
+    --panel: 255 255 255;        /* superfície (painel, composer, modais) */
+  }
+
+  /* Tema escuro — só troca os valores; layout intacto. */
+  .dark {
+    --background: 17 20 27;      /* #11141b fundo geral */
+    --background-50: 30 34 44;   /* superfícies (bolha assistente) */
+    --background-100: 38 43 55;  /* hover */
+    --title: 241 243 247;        /* texto de título quase branco */
+    --title-50: 226 229 236;
+    --text-200: 209 213 221;
+    --text-100: 168 174 186;
+    --text-50: 130 137 151;
+    --stroke: 42 48 60;
+    --stroke-light: 34 39 50;
+    --primary: 129 121 255;      /* índigo mais claro p/ contraste no escuro */
+    --primary-hover: 149 142 255;
+    --primary-light: 40 40 68;
+    --claude: 232 145 112;
+    --panel: 24 28 37;           /* #181c25 superfície no escuro */
+  }
+
   body {
     @apply bg-background text-text-100 font-sans antialiased;
   }
@@ -41,7 +79,7 @@
 
   /* Pills de ação rápida sob o composer */
   .action-pill {
-    @apply inline-flex items-center gap-2 rounded-full border border-stroke bg-white
+    @apply inline-flex items-center gap-2 rounded-full border border-stroke bg-panel
            px-4 py-2 text-sm font-medium text-text-100 transition
            hover:border-primary hover:text-primary;
   }
@@ -54,21 +92,21 @@
   }
   .btn-outline {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-stroke
-           bg-white px-4 py-2 text-sm font-medium text-text-200 transition
+           bg-panel px-4 py-2 text-sm font-medium text-text-200 transition
            hover:border-primary hover:text-primary;
   }
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-red-200
-           bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50;
+           bg-panel px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50;
   }
   .input {
-    @apply w-full rounded-lg border border-stroke bg-white px-4 py-2.5 text-sm text-title
+    @apply w-full rounded-lg border border-stroke bg-panel px-4 py-2.5 text-sm text-title
            outline-none transition focus:border-primary;
   }
 
   /* compat: componentes antigos (ChoiceCards, canais) */
   .tg-card {
-    @apply rounded-2xl border border-stroke bg-white p-6 shadow-panel;
+    @apply rounded-2xl border border-stroke bg-panel p-6 shadow-panel;
   }
   .tg-btn { @apply btn; }
   .tg-btn-outline { @apply btn-outline; }

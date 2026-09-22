@@ -14,6 +14,7 @@ import {
   Moon,
 } from "lucide-react";
 import { api, type Account, type Project, type SessionSummary } from "../lib/api";
+import { useTheme } from "../lib/theme";
 
 // Sidebar do painel do cliente — estilo AIChat/Tailgrids: logo + colapsar,
 // Novo chat, Buscar (abre modal), Projetos com contador e botão +,
@@ -41,7 +42,7 @@ export function Sidebar({
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [account, setAccount] = useState<Account | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [theme, setTheme] = useState<"system" | "light" | "dark">("light");
+  const [theme, setTheme] = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -145,7 +146,7 @@ export function Sidebar({
       {/* Cartão de conta + menu popover */}
       <div className="relative mt-3" ref={menuRef}>
         {menuOpen && (
-          <div className="absolute bottom-16 left-0 right-0 z-20 rounded-xl border border-stroke bg-white p-1.5 shadow-pop">
+          <div className="absolute bottom-16 left-0 right-0 z-20 rounded-xl border border-stroke bg-panel p-1.5 shadow-pop">
             <button className="menu-item" onClick={() => { setMenuOpen(false); onOpenSettings(); }}>
               <Settings size={16} /> Configurações
             </button>
@@ -180,7 +181,7 @@ export function Sidebar({
             <span className="block truncate text-sm font-medium text-title">{account?.name || "Cliente"}</span>
             <span className="block truncate text-xs text-text-50">{account?.plan || "Ativo"}</span>
           </span>
-          <span className="rounded-md bg-white px-2.5 py-1 text-xs font-medium text-primary shadow-sm">
+          <span className="rounded-md bg-panel px-2.5 py-1 text-xs font-medium text-primary shadow-sm">
             <Settings size={14} />
           </span>
         </button>

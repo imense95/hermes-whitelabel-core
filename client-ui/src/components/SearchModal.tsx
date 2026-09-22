@@ -37,7 +37,7 @@ export function SearchModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh]" onClick={onClose}>
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-pop" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-panel shadow-pop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 border-b border-stroke px-5 py-4">
           <Search size={18} className="text-text-50" />
           <input
@@ -71,7 +71,7 @@ export function SearchModal({
         </div>
 
         <div className="border-t border-stroke bg-background-50 px-5 py-2.5 text-center text-xs text-text-50">
-          Pressione <kbd className="rounded bg-white px-1.5 py-0.5 shadow-sm">ESC</kbd> para fechar
+          Pressione <kbd className="rounded bg-panel px-1.5 py-0.5 shadow-sm">ESC</kbd> para fechar
         </div>
       </div>
     </div>
