@@ -11,3 +11,7 @@ infra/devdata/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# venv local de teste da Admin API
+admin-api/.venv/
+__pycache__/
