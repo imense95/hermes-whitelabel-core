@@ -89,3 +89,34 @@ O client do Hermes é **público com PKCE** (`publicClient: true`,
 Realm por cliente (`urban`). O provider de auth do dashboard é registrado por
 plugin/config apontando para o realm; então o dashboard da Urban para de dar 502
 e passa a exigir login OIDC. A chave do LLM entra pela própria tela depois disso.
+
+## Subida da Urban — ARMADILHAS RESOLVIDAS (set/2026, ordem de descoberta)
+
+- **EasyPanel escopa volume por serviço:** `hermes-whitelabel_<svc>_dados`. Um
+  serviço de diagnóstico com mount `dados` ganha um volume NOVO e vazio, não o da
+  instância. Foi a causa de todo `.env` "perdido" — eu lia o volume errado; o
+  `.env` real da Urban (`hermes-whitelabel_urban_dados`) estava intacto. Ler o
+  volume certo por SSH: `docker run --rm -v hermes-whitelabel_urban_dados:/d ...`.
+- **Escrever no `.env` por SSH quebra a dona:** `docker run alpine` roda como
+  root; `mv`+`chmod` deixam `root:root` e o container (uid 10000) não lê →
+  `PermissionError: /opt/data/.env`. Sempre `chown 10000:10000 && chmod 600` após
+  mexer.
+- **`command` no EasyPanel substitui o entrypoint** (envolve em `/bin/sh -c`). A
+  imagem usa `entrypoint-dispatch.sh` → s6 → o dashboard é serviço s6 próprio
+  (9119), `main-hermes` é `sleep infinity`, o CMD do usuário roda como "main
+  program" do /init. Command vazio → CMD default = chat interativo → sai sem TTY
+  → container para. `command: gateway run` → `/bin/sh -c gateway run` mata o s6.
+  **Correto:** `command: exec /opt/hermes/docker/entrypoint-dispatch.sh sleep
+  infinity` (o `exec` faz o dispatch virar PID 1 → s6 sobe → dashboard roda).
+- **`updateAppDeploy` só persiste o command após `deployAppService`** — disparar
+  o deploy logo em seguida.
+- **Bug de imagem: venv-servicos apontava para `/root`.** `uv venv` sem
+  `--python` usa o Python gerenciado do uv sob `/root` (modo 700); uid 10000 não
+  atravessa → `exec: /opt/venv-servicos/bin/python: Permission denied` (Admin API
+  não sobe). Corrigido: `uv venv --python /opt/hermes/.venv/bin/python`. **Exige
+  REBUILD.**
+
+**Circuito OIDC provado end-to-end:** `/auth/login?provider=self-hosted` com PKCE
+devolve 302 para `…/realms/urban/protocol/openid-connect/auth?client_id=hermes-dashboard&redirect_uri=…/auth/callback&code_challenge_method=S256`.
+Raiz da Urban = 302 → /login; container `Up` estável; dashboard READY na 9119.
+Pendente: chave do LLM (`provider_configured=false`) entra pela tela após o login.

@@ -25,7 +25,7 @@ COPY admin-api/requirements.txt     /opt/admin-api/requirements.txt
 COPY easypanel-proxy/requirements.txt /opt/proxy/requirements.txt
 RUN set -eu; \
     if command -v uv >/dev/null 2>&1; then \
-        uv venv /opt/venv-servicos; \
+        uv venv --python /opt/hermes/.venv/bin/python /opt/venv-servicos; \
         VIRTUAL_ENV=/opt/venv-servicos uv pip install --no-cache \
             -r /opt/admin-api/requirements.txt \
             -r /opt/proxy/requirements.txt; \
