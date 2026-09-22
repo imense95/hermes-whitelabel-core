@@ -1,30 +1,66 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    @apply bg-background text-text-100 font-sans antialiased;
+  }
+}
+
 @layer components {
-  /* Botões e cartões no estilo Tailgrids — reutilizados nas 4 abas. */
-  .tg-btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5
+  /* Item da sidebar (New Chat, Search, conversas) */
+  .side-item {
+    @apply flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-text-100
+           transition hover:bg-background-100;
+  }
+  .side-item-active {
+    @apply bg-background-100 font-medium text-title;
+  }
+  .side-convo {
+    @apply flex w-full items-center justify-between gap-2 truncate rounded-lg px-3 py-2
+           text-sm text-text-100 transition hover:bg-background-100;
+  }
+  .side-label {
+    @apply px-3 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-text-50;
+  }
+  .count-pill {
+    @apply rounded-md bg-background-100 px-2 py-0.5 text-xs font-medium text-text-50;
+  }
+
+  /* Pills de ação rápida sob o composer */
+  .action-pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-stroke bg-white
+           px-4 py-2 text-sm font-medium text-text-100 transition
+           hover:border-primary hover:text-primary;
+  }
+
+  /* Botões (modal, canais) */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5
            text-sm font-medium text-white transition hover:bg-primary-hover
            disabled:cursor-not-allowed disabled:opacity-60;
   }
-  .tg-btn-outline {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-stroke
-           bg-white px-5 py-2.5 text-sm font-medium text-body transition hover:border-primary hover:text-primary;
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-stroke
+           bg-white px-4 py-2 text-sm font-medium text-text-200 transition
+           hover:border-primary hover:text-primary;
   }
-  .tg-card {
-    @apply rounded-lg border border-stroke bg-white p-6 shadow-card;
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-red-200
+           bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50;
   }
-  .tg-input {
-    @apply w-full rounded-md border border-stroke bg-white px-4 py-2.5 text-sm text-dark
+  .input {
+    @apply w-full rounded-lg border border-stroke bg-white px-4 py-2.5 text-sm text-title
            outline-none transition focus:border-primary;
   }
-  .tg-tab {
-    @apply flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium text-body
-           transition hover:bg-primary-light hover:text-primary;
+
+  /* compat: componentes antigos (ChoiceCards, canais) */
+  .tg-card {
+    @apply rounded-2xl border border-stroke bg-white p-6 shadow-panel;
   }
-  .tg-tab-active {
-    @apply bg-primary-light text-primary;
-  }
+  .tg-btn { @apply btn; }
+  .tg-btn-outline { @apply btn-outline; }
+  .tg-input { @apply input; }
 }

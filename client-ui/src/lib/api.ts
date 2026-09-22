@@ -21,6 +21,18 @@ export interface ModelOption {
   provider?: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  count?: number;
+}
+
+export interface Account {
+  name: string;
+  email: string;
+  plan?: string;
+}
+
 export interface RunApprovalRequest {
   run_id: string;
   kind: "approval" | "choice";
@@ -51,10 +63,12 @@ export const api = {
   listSessions: () => req<SessionSummary[]>("/api/sessions"),
   getMessages: (id: string) => req<ChatMessage[]>(`/api/sessions/${encodeURIComponent(id)}/messages`),
   sendChat: (id: string, content: string) =>
-    req<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}/chat`, {
+    req<{ ok: boolean; reply?: string }>(`/api/sessions/${encodeURIComponent(id)}/chat`, {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
+  listProjects: () => req<Project[]>("/api/projects"),
+  getAccount: () => req<Account>("/api/account"),
   // Stream de resposta (SSE). Devolve o Response para o chamador ler o corpo.
   streamChat: (id: string, content: string, signal?: AbortSignal) =>
     fetch(`/api/sessions/${encodeURIComponent(id)}/chat/stream`, {

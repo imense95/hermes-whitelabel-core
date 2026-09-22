@@ -46,6 +46,19 @@ VITE_OIDC_ISSUER=https://<keycloak>/realms/<cliente>
 VITE_OIDC_CLIENT_ID=hermes-client-ui
 ```
 
+## Layout (chat-first, estilo AIChat/Tailgrids)
+
+- **Sidebar**: logo, Novo chat, Buscar, Projetos (com contador), conversas
+  agrupadas por data, cartão de conta que abre as **Configurações**.
+- **Área de chat**: estado vazio com hero "Como posso ajudar?" + composer
+  centralizado + pills de ação; conversa aberta mostra as bolhas + composer no
+  rodapé. O `ChoiceCards` (escolha visual) aparece inline no chat.
+- **Composer**: textarea, anexo, Ferramentas, seletor de modelo e enviar.
+- **Configurações (modal)**: Conta, Modelos (tokens), Telegram, WhatsApp.
+
+Deep-links úteis em dev: `?s=<id>` abre uma conversa, `?settings=1&section=whatsapp`
+abre o modal numa seção.
+
 ## Abas (fatia 1)
 
 | Aba | Backend |
