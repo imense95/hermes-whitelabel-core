@@ -134,6 +134,49 @@ tarefa do cliente.
    interna. Não exponha para "facilitar" acesso externo; use um túnel
    pontual.
 
+### Armadilha: "role plataforma_admin does not exist" é mentira
+
+Ao trocar a senha pela tela de Credentials, o painel devolve:
+
+```
+psql: error: ... /var/run/postgresql/.s.PGSQL:5432 failed
+FATAL: database "plataforma_admin" does not exist
+```
+
+**A role existe e é superusuário.** Verificado direto em `pg_roles`:
+
+```
+plataforma_admin  super=true login=true
+urban_app         super=false login=true
+```
+
+A mensagem fala do **banco**, não da role. O painel executa `psql -U <user>`
+**sem `-d`**, e sem `-d` o `psql` usa como banco padrão o *nome do usuário*.
+Existe o banco `plataforma`; não existia `plataforma_admin`. O `psql` tentou
+abrir um banco homônimo do usuário, não achou, e abortou antes de rodar o
+`ALTER ROLE`.
+
+Isso acontece **sempre** que `user` ≠ `databaseName` na criação do serviço
+Postgres do EasyPanel. Se ambos se chamassem `plataforma`, nunca apareceria.
+
+**Correção aplicada:** criado o banco vazio `plataforma_admin`, dono
+`plataforma_admin`, só para o default do `psql` cair em lugar válido.
+
+Reproduzido e reprovado no mesmo container:
+
+| | |
+|---|---|
+| antes | `FATAL: database "plataforma_admin" does not exist` |
+| depois | `plataforma_admin\|plataforma_admin` |
+| schemas | `urban,platform` — intactos |
+
+O banco novo fica **vazio para sempre**: não tem schema de cliente, não tem
+dado. É um alvo de aterrissagem para o default do `psql`. Custo em disco é
+o de um template de catálogo.
+
+**Para clientes futuros:** crie o serviço Postgres com `user` igual a
+`databaseName`, e essa classe de erro não aparece.
+
 ### Por que a rotação do `plataforma_admin` não foi feita por API
 
 `updatePostgresCredentials` exige a senha nova **no corpo da chamada**. Gerar
