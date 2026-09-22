@@ -1,0 +1,40 @@
+{
+  "realm": "urban",
+  "enabled": true,
+  "displayName": "Urban Passageiro",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "clients": [
+    {
+      "clientId": "hermes-dashboard",
+      "name": "Hermes Dashboard (Urban)",
+      "description": "Client publico com PKCE para o dashboard da instancia Urban. Sem client_secret: o Hermes nao suporta client confidencial.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "rootUrl": "https://hermes-whitelabel-urban.ajljmq.easypanel.host",
+      "baseUrl": "https://hermes-whitelabel-urban.ajljmq.easypanel.host",
+      "redirectUris": [
+        "https://hermes-whitelabel-urban.ajljmq.easypanel.host/auth/callback"
+      ],
+      "webOrigins": [
+        "https://hermes-whitelabel-urban.ajljmq.easypanel.host"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://hermes-whitelabel-urban.ajljmq.easypanel.host/*"
+      },
+      "defaultClientScopes": ["profile", "email"],
+      "optionalClientScopes": ["offline_access"]
+    }
+  ]
+}
