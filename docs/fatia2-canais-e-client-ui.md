@@ -7,6 +7,30 @@
 
 ## O que já existe no core upstream (não reconstruir)
 
+> **Atualização (reconhecimento 2):** o upstream NÃO só tem os adapters — tem a
+> **API REST de onboarding de mensageria inteira** pronta
+> (`hermes_cli/web_routers/messaging.py`, montada em `web_server.py`). Não
+> precisamos escrever endpoint de QR nenhum. Rotas reais (mesma origin do
+> dashboard, atrás do gate OIDC):
+>
+> - `POST /api/messaging/whatsapp/onboarding/start` → `{pairing_id, ...}`
+> - `GET  /api/messaging/whatsapp/onboarding/{pairing_id}` →
+>   `{status, qr_payload, account_phone, account_name, expires_at, error}`
+>   (status: `starting` → `awaiting_qr`/`qr` → `connected`)
+> - `POST /api/messaging/whatsapp/onboarding/{pairing_id}/apply` → grava
+>   `WHATSAPP_ENABLED/MODE/ALLOWED_USERS` no `.env` do profile e reinicia o gateway
+> - `DELETE /api/messaging/whatsapp/onboarding/{pairing_id}` → cancela
+> - Telegram: mesmo padrão em `/api/messaging/telegram/onboarding/*`
+> - `GET /api/messaging/platforms` → status/config de cada plataforma
+> - `PUT /api/messaging/platforms/{id}` → enable/config
+>
+> O bridge Baileys é chamado internamente em `--pair-only --pair-json`; o
+> `qr_payload` já vem serializado para o front desenhar. **Fatia 2 = alinhar o
+> client-ui a essas rotas + servir a SPA + habilitar na Urban.** Nada de código
+> novo no core.
+
+
+
 - **`plugins/platforms/telegram/`** — adapter nativo via `python-telegram-bot`.
   - Credencial: `TELEGRAM_BOT_TOKEN` (do @BotFather). Opcionais:
     `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_HOME_CHANNEL`.

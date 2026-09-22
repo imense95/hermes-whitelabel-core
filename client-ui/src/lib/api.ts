@@ -33,14 +33,26 @@ export interface Account {
   plan?: string;
 }
 
-export interface ChannelStatus {
-  telegram: { connected: boolean; username?: string };
-  whatsapp: { state: "disconnected" | "awaiting_qr" | "connected"; number?: string };
+// Onboarding do WhatsApp (rotas reais do upstream em /api/messaging/*).
+export interface WaOnboardingStart { pairing_id: string; }
+export interface WaOnboardingStatus {
+  pairing_id: string;
+  status: "starting" | "awaiting_qr" | "qr" | "connected" | "expired";
+  qr_payload?: string | null;
+  account_phone?: string | null;
+  account_name?: string | null;
+  error?: string | null;
 }
-
-export interface WhatsAppQr {
-  state: "awaiting_qr" | "connected" | "starting";
-  qr?: string; // string do QR (renderizada em <canvas> no front) ou dataURL
+// Onboarding do Telegram (deep-link + QR via serviço de pairing).
+export interface TgOnboardingStart {
+  pairing_id: string;
+  deep_link: string;
+  qr_payload: string;
+  suggested_username?: string;
+}
+export interface TgOnboardingStatus {
+  status: string; // "pending" | "connected" | ...
+  username?: string;
 }
 
 export interface RunApprovalRequest {
@@ -105,20 +117,37 @@ export const api = {
       body: JSON.stringify({ choice: choiceId }),
     }),
 
-  // --- Canais (fatia 2) ---
-  // Rotas do produto (não do core upstream). O gateway servirá o client-ui na
-  // mesma origin; /api/channels/* fica atrás do gate OIDC (cookie Keycloak).
-  channelStatus: () => req<ChannelStatus>("/api/channels"),
-  // Token do Telegram é segredo → vai para o env da instância pela Admin API
-  // (/v1/credentials, allowlist inclui TELEGRAM_BOT_TOKEN). O front nunca guarda.
-  connectTelegram: (token: string) =>
-    req<{ ok: boolean }>("/api/channels/telegram", {
+  // --- Canais / mensageria (rotas reais do upstream: /api/messaging/*) ---
+  // Servidas na mesma origin do dashboard, atrás do gate OIDC (cookie Keycloak).
+  messagingPlatforms: () => req<any>("/api/messaging/platforms"),
+
+  // WhatsApp: onboarding self-contained (bridge Baileys em --pair-only).
+  waStart: () =>
+    req<WaOnboardingStart>("/api/messaging/whatsapp/onboarding/start", {
       method: "POST",
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({}),
     }),
-  // Dispara/consulta o pareamento do WhatsApp (bridge Baileys isolado).
-  whatsappQr: () => req<WhatsAppQr>("/api/channels/whatsapp/qr"),
-  whatsappStart: () => req<WhatsAppQr>("/api/channels/whatsapp/start", { method: "POST" }),
+  waStatus: (pairingId: string) =>
+    req<WaOnboardingStatus>(`/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}`),
+  waApply: (pairingId: string) =>
+    req<{ ok: boolean; needs_restart?: boolean }>(
+      `/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}/apply`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+
+  // Telegram: onboarding por deep-link + QR (serviço de pairing do @BotFather).
+  tgStart: (botName?: string) =>
+    req<TgOnboardingStart>("/api/messaging/telegram/onboarding/start", {
+      method: "POST",
+      body: JSON.stringify({ bot_name: botName || "Hermes Agent" }),
+    }),
+  tgStatus: (pairingId: string) =>
+    req<TgOnboardingStatus>(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}`),
+  tgApply: (pairingId: string) =>
+    req<{ ok: boolean; needs_restart?: boolean }>(
+      `/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}/apply`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
 
   health: () => req<{ status: string }>("/v1/health"),
 };

@@ -43,14 +43,10 @@ const MODELS = [
 
 const ACCOUNT = { name: "Cliente Urban", email: "contato@urbanpassageiro.com.br", plan: "Ativo" };
 
-// Estado de canais para o mock (simula pareamento do WhatsApp em memória).
-const channels = {
-  telegram: { connected: false, username: undefined as string | undefined },
-  whatsapp: { state: "disconnected" as "disconnected" | "awaiting_qr" | "connected", number: undefined as string | undefined },
-};
-let waPolls = 0;
-// QR de exemplo (conteúdo qualquer — o front desenha como QR de verdade).
+// Estado de mensageria para o mock (simula onboarding real do upstream).
 const SAMPLE_QR = "2@mockWhatsAppPairingPayload/ExemploParaDesenvolvimentoVisual==,AbCdEf123==,XyZ==";
+const wa = { polls: 0, connected: false };
+const tg = { polls: 0, connected: false };
 
 function send(res: any, body: unknown, status = 200) {
   res.statusCode = status;
@@ -75,28 +71,40 @@ export function mockApi(): Plugin {
         if (url === "/api/model/options") return send(res, { options: MODELS });
         if (url === "/v1/health") return send(res, { status: "ok (mock)" });
 
-        // --- Canais (fatia 2, mock) ---
-        if (url === "/api/channels") return send(res, channels);
-        if (url === "/api/channels/telegram" && req.method === "POST") {
-          channels.telegram = { connected: true, username: "@urban_bot" };
-          return send(res, { ok: true });
+        // --- Mensageria (rotas reais do upstream: /api/messaging/*) ---
+        if (url === "/api/messaging/platforms") {
+          return send(res, {
+            whatsapp: { enabled: wa.connected, connected: wa.connected },
+            telegram: { enabled: tg.connected, connected: tg.connected },
+          });
         }
-        if (url === "/api/channels/whatsapp/start" && req.method === "POST") {
-          channels.whatsapp.state = "awaiting_qr";
-          waPolls = 0;
-          return send(res, { state: "awaiting_qr", qr: SAMPLE_QR });
+        // WhatsApp onboarding
+        if (url === "/api/messaging/whatsapp/onboarding/start" && req.method === "POST") {
+          wa.polls = 0; wa.connected = false;
+          return send(res, { pairing_id: "wa_mock_1" });
         }
-        if (url === "/api/channels/whatsapp/qr") {
-          // Simula pareamento: após alguns polls o número "conecta".
-          if (channels.whatsapp.state === "awaiting_qr") {
-            waPolls += 1;
-            if (waPolls >= 3) {
-              channels.whatsapp = { state: "connected", number: "+55 65 99999-0000" };
-              return send(res, { state: "connected" });
-            }
-            return send(res, { state: "awaiting_qr", qr: SAMPLE_QR });
-          }
-          return send(res, { state: channels.whatsapp.state });
+        let wm = url.match(/^\/api\/messaging\/whatsapp\/onboarding\/([^/]+)$/);
+        if (wm) {
+          wa.polls += 1;
+          if (wa.polls >= 3) { wa.connected = true; return send(res, { pairing_id: wm[1], status: "connected", account_phone: "+55 65 99999-0000" }); }
+          return send(res, { pairing_id: wm[1], status: "awaiting_qr", qr_payload: SAMPLE_QR });
+        }
+        if (/^\/api\/messaging\/whatsapp\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST") {
+          return send(res, { ok: true, needs_restart: false });
+        }
+        // Telegram onboarding
+        if (url === "/api/messaging/telegram/onboarding/start" && req.method === "POST") {
+          tg.polls = 0; tg.connected = false;
+          return send(res, { pairing_id: "tg_mock_1", deep_link: "https://t.me/BotFather?start=mock", qr_payload: "https://t.me/BotFather?start=mock", suggested_username: "urban_bot" });
+        }
+        let tm = url.match(/^\/api\/messaging\/telegram\/onboarding\/([^/]+)$/);
+        if (tm) {
+          tg.polls += 1;
+          if (tg.polls >= 3) { tg.connected = true; return send(res, { status: "connected", username: "@urban_bot" }); }
+          return send(res, { status: "pending" });
+        }
+        if (/^\/api\/messaging\/telegram\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST") {
+          return send(res, { ok: true, needs_restart: false });
         }
 
         if (req.method === "POST" && url.endsWith("/chat")) {

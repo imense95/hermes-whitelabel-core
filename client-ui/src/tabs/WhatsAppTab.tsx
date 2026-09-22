@@ -7,13 +7,16 @@ type WaState = "idle" | "starting" | "awaiting_qr" | "connected" | "error";
 
 // Conexão do WhatsApp por QR Code (bridge Baileys — decisão do cliente, ciente
 // do risco de ban por ser não-oficial). O bridge Node roda ISOLADO (processo
-// separado, fora do agente); este painel dispara o pareamento e faz polling do
-// QR + status. Endpoints reais: POST /whatsapp/start, GET /whatsapp/qr.
+// separado, fora do agente). Usa as rotas reais do upstream:
+// POST /api/messaging/whatsapp/onboarding/start -> {pairing_id}
+// GET  /api/messaging/whatsapp/onboarding/{id}  -> {status, qr_payload, account_phone}
+// POST .../{id}/apply -> grava .env + reinicia gateway.
 export function WhatsAppTab() {
   const [state, setState] = useState<WaState>("idle");
   const [number, setNumber] = useState<string | undefined>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pairingRef = useRef<string | null>(null);
 
   // Auto-inicia o pareamento em teste (?wa=start). Sem efeito em produção.
   useEffect(() => {
@@ -24,18 +27,8 @@ export function WhatsAppTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Status inicial (pode já estar conectado).
-  useEffect(() => {
-    api.channelStatus().then((c) => {
-      if (c.whatsapp.state === "connected") {
-        setState("connected");
-        setNumber(c.whatsapp.number);
-      }
-    }).catch(() => {});
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
-  // Desenha o QR sempre que ele muda e o canvas está montado.
   async function drawQr(qr: string) {
     if (canvasRef.current) {
       await QRCode.toCanvas(canvasRef.current, qr, { width: 224, margin: 1 }).catch(() => {});
@@ -45,26 +38,34 @@ export function WhatsAppTab() {
   async function startPairing() {
     setState("starting");
     try {
-      const r = await api.whatsappStart();
-      if (r.state === "connected") { finishConnected(); return; }
+      const { pairing_id } = await api.waStart();
+      pairingRef.current = pairing_id;
       setState("awaiting_qr");
-      if (r.qr) await drawQr(r.qr);
-      // polling do QR/estado a cada 2.5s
+      // polling do status/QR a cada 2.5s
       pollRef.current = setInterval(async () => {
-        const s = await api.whatsappQr().catch(() => null);
+        const id = pairingRef.current;
+        if (!id) return;
+        const s = await api.waStatus(id).catch(() => null);
         if (!s) return;
-        if (s.state === "connected") { finishConnected(); return; }
-        if (s.qr) await drawQr(s.qr);
+        if (s.status === "connected") { await finishConnected(s.account_phone || undefined); return; }
+        if (s.status === "expired") { fail(); return; }
+        if (s.qr_payload) await drawQr(s.qr_payload);
       }, 2500);
     } catch {
-      setState("error");
+      fail();
     }
   }
 
-  async function finishConnected() {
+  function fail() {
     if (pollRef.current) clearInterval(pollRef.current);
-    const c = await api.channelStatus().catch(() => null);
-    setNumber(c?.whatsapp.number);
+    setState("error");
+  }
+
+  async function finishConnected(phone?: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    // grava .env (WHATSAPP_ENABLED=true) e reinicia o gateway
+    if (pairingRef.current) await api.waApply(pairingRef.current).catch(() => {});
+    setNumber(phone);
     setState("connected");
   }
 
@@ -116,7 +117,7 @@ export function WhatsAppTab() {
             </p>
 
             {state === "error" && (
-              <p className="mt-2 text-xs text-text-50">Não foi possível iniciar o pareamento agora. Tente novamente.</p>
+              <p className="mt-2 text-xs text-text-50">Não foi possível parear agora (QR expirado ou erro). Tente novamente.</p>
             )}
           </>
         )}

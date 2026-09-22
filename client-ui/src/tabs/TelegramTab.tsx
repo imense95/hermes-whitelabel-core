@@ -1,33 +1,68 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import { Send, Check, Loader2 } from "lucide-react";
-import { api, type ChannelStatus } from "../lib/api";
+import { api } from "../lib/api";
 
-// Conexão do Telegram por BOT TOKEN (@BotFather) — nativo do Hermes
-// (plugins/platforms/telegram no upstream). O token é segredo: vai para o env
-// da instância pela camada segura (Admin API /v1/credentials), nunca ao front.
+type TgState = "idle" | "starting" | "awaiting" | "connected" | "error";
+
+// Conexão do Telegram — nativo do Hermes (plugins/platforms/telegram no upstream).
+// Fluxo real de onboarding do upstream (/api/messaging/telegram/onboarding/*):
+// start -> {pairing_id, deep_link, qr_payload}; o usuário abre o deep-link /
+// escaneia o QR e autoriza no app do Telegram; polling detecta a conexão; apply
+// grava o token no .env e reinicia. O token nunca passa pelo front.
 export function TelegramTab() {
-  const [token, setToken] = useState("");
-  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
-  const [channel, setChannel] = useState<ChannelStatus["telegram"] | null>(null);
+  const [state, setState] = useState<TgState>("idle");
+  const [deepLink, setDeepLink] = useState<string>("");
+  const [qr, setQr] = useState<string>("");
+  const [username, setUsername] = useState<string | undefined>();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pairingRef = useRef<string | null>(null);
 
   useEffect(() => {
-    api.channelStatus().then((c) => setChannel(c.telegram)).catch(() => setChannel(null));
+    if (new URLSearchParams(window.location.search).get("tg") === "start") {
+      const t = setTimeout(() => start(), 400);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function connect() {
-    setStatus("saving");
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  // Desenha o QR quando o canvas já está montado (state=awaiting) e há payload.
+  useEffect(() => {
+    if (state === "awaiting" && qr && canvasRef.current) {
+      QRCode.toCanvas(canvasRef.current, qr, { width: 200, margin: 1 }).catch(() => {});
+    }
+  }, [state, qr]);
+
+  async function start() {
+    setState("starting");
     try {
-      await api.connectTelegram(token);
-      setToken("");
-      const c = await api.channelStatus();
-      setChannel(c.telegram);
-      setStatus("idle");
+      const r = await api.tgStart();
+      pairingRef.current = r.pairing_id;
+      setDeepLink(r.deep_link);
+      if (r.qr_payload) setQr(r.qr_payload);
+      setState("awaiting");
+      pollRef.current = setInterval(async () => {
+        const id = pairingRef.current;
+        if (!id) return;
+        const s = await api.tgStatus(id).catch(() => null);
+        if (!s) return;
+        if (s.status === "connected") { await finish(s.username); }
+      }, 2500);
     } catch {
-      setStatus("error");
+      if (pollRef.current) clearInterval(pollRef.current);
+      setState("error");
     }
   }
 
-  const connected = channel?.connected;
+  async function finish(user?: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (pairingRef.current) await api.tgApply(pairingRef.current).catch(() => {});
+    setUsername(user);
+    setState("connected");
+  }
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -38,44 +73,48 @@ export function TelegramTab() {
           </span>
           <div>
             <h2 className="text-base font-semibold text-title">Telegram</h2>
-            <p className="text-sm text-text-50">Conecte um bot via token do @BotFather.</p>
+            <p className="text-sm text-text-50">Conecte um bot via @BotFather.</p>
           </div>
-          {connected && (
+          {state === "connected" && (
             <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-500/15 dark:text-green-400">
               <Check size={13} /> Conectado
             </span>
           )}
         </div>
 
-        {connected ? (
+        {state === "connected" ? (
           <div className="mt-5 rounded-lg border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
-            Bot ativo{channel?.username ? <> como <b className="text-title">{channel.username}</b></> : null}.
+            Bot ativo{username ? <> como <b className="text-title">{username}</b></> : null}.
             Botões inline (escolha visual) já funcionam nas conversas.
+          </div>
+        ) : state === "awaiting" ? (
+          <div className="mt-5 flex flex-col items-center">
+            <p className="mb-4 text-center text-sm text-text-100">
+              Escaneie o QR com o Telegram ou abra o link abaixo e autorize o bot.
+            </p>
+            <canvas ref={canvasRef} className="rounded-lg" />
+            {deepLink && (
+              <a href={deepLink} target="_blank" rel="noreferrer" className="btn-outline mt-4">
+                Abrir no Telegram
+              </a>
+            )}
+            <p className="mt-3 flex items-center gap-2 text-xs text-text-50">
+              <Loader2 size={13} className="animate-spin" /> Aguardando autorização…
+            </p>
           </div>
         ) : (
           <>
             <ol className="mt-5 space-y-2 text-sm text-text-100">
-              <li>1. No Telegram, fale com <b className="text-title">@BotFather</b> → <code>/newbot</code>.</li>
-              <li>2. Copie o token que ele fornece.</li>
-              <li>3. Cole abaixo e conecte. Botões inline funcionam de imediato.</li>
+              <li>1. Clique em <b className="text-title">Iniciar conexão</b>.</li>
+              <li>2. Escaneie o QR ou abra o link — o Telegram abre no @BotFather.</li>
+              <li>3. Autorize; o bot conecta sozinho. Botões inline já funcionam.</li>
             </ol>
-
-            <div className="mt-5 space-y-3">
-              <input
-                className="input"
-                type="password"
-                placeholder="123456:ABC-DEF..."
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-              <button className="btn w-full" disabled={!token || status === "saving"} onClick={connect}>
-                {status === "saving" ? <><Loader2 size={16} className="animate-spin" /> Conectando…</> : "Conectar Telegram"}
-              </button>
-            </div>
-
-            {status === "error" && (
+            <button className="btn mt-5 w-full" disabled={state === "starting"} onClick={start}>
+              {state === "starting" ? <><Loader2 size={16} className="animate-spin" /> Iniciando…</> : "Iniciar conexão"}
+            </button>
+            {state === "error" && (
               <p className="mt-4 rounded-md bg-amber-50 px-4 py-3 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-                Não foi possível salvar o token agora. Verifique a conexão e tente de novo.
+                Não foi possível iniciar a conexão agora. Tente novamente.
               </p>
             )}
           </>
