@@ -5,6 +5,22 @@
 # Sem default proposital: build sem --build-arg HERMES_TAG falha na hora,
 # em vez de assar :latest e mudar de versao sozinho no proximo build.
 ARG HERMES_TAG
+
+# --- Estagio de build do client-ui (front-end do cliente final) ------------
+# App separado do dashboard de dev (React+Vite+Tailwind, estetica AIChat).
+# Buildado aqui e servido pelo proprio gateway via HERMES_WEB_DIST (abaixo),
+# para o cliente abrir o chat na origin da instancia atras do OIDC do Keycloak.
+# node:20 e' descartado: nada deste estagio vai para a imagem final alem do dist.
+FROM node:20-alpine AS client-ui-build
+WORKDIR /build
+# Camada de deps separada do codigo: cache do npm ci sobrevive a mudanca de src.
+COPY client-ui/package.json client-ui/package-lock.json ./
+RUN npm ci --no-audit --no-fund --loglevel=error
+COPY client-ui/ ./
+# Build de producao (tsc -b + vite build). base padrao "/" = servido na raiz.
+RUN npm run build && test -f dist/index.html
+
+ARG HERMES_TAG
 FROM nousresearch/hermes-agent:${HERMES_TAG}
 
 # ARG declarado antes do FROM sai de escopo depois dele. Sem redeclarar, o
@@ -49,6 +65,13 @@ COPY --chown=root:root product/plugins/ /opt/product/plugins/
 COPY --chown=root:root product/skins/   /opt/product/skins/
 COPY --chown=root:root product/config/  /opt/product/config/
 
+# --- Front-end do cliente (client-ui) --------------------------------------
+# O dist buildado no estagio node acima. Vai para um caminho PROPRIO
+# (/opt/product/client-ui), NAO sobrescreve o web_dist de estoque do dashboard
+# de dev — assim a troca e' reversivel (basta remover a env HERMES_WEB_DIST).
+# O gateway le o conteudo por request; o caminho vem da env, lida no boot.
+COPY --chown=root:root --from=client-ui-build /build/dist/ /opt/product/client-ui/
+
 # --- Motores Node dos plugins do catalogo ----------------------------------
 # A imagem upstream ja traz node + ffmpeg (usados pelo proprio Hermes), entao
 # so instalamos as dependencias de cada plugin que tiver package-lock.json.
@@ -77,6 +100,12 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/admin-api/run \
  && touch /etc/s6-overlay/s6-rc.d/user/contents.d/admin-api
 
 USER hermes
+
+# A imagem do produto serve o client-ui (chat do cliente) por padrao. Reversivel
+# por instancia: sobrepor HERMES_WEB_DIST no env do EasyPanel (ex. para o
+# dashboard de dev de estoque) OU remove-la volta ao web_dist embutido do core.
+# O gateway le o conteudo por request; o caminho vem desta env, lida no boot.
+ENV HERMES_WEB_DIST=/opt/product/client-ui
 
 LABEL org.opencontainers.image.title="hermes-whitelabel" \
       org.opencontainers.image.description="Plataforma de agentes white-label" \
