@@ -34,7 +34,13 @@ export interface Account {
 }
 
 // Onboarding do WhatsApp (rotas reais do upstream em /api/messaging/*).
-export interface WaOnboardingStart { pairing_id: string; }
+// O start PODE já vir "connected" se houver creds.json no volume (pareamento
+// anterior) — por isso carrega os mesmos campos do status.
+export interface WaOnboardingStart {
+  pairing_id: string;
+  status?: "starting" | "awaiting_qr" | "qr" | "connected" | "expired";
+  account_phone?: string | null;
+}
 export interface WaOnboardingStatus {
   pairing_id: string;
   status: "starting" | "awaiting_qr" | "qr" | "connected" | "expired";
@@ -85,6 +91,18 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
   const ct = res.headers.get("content-type") || "";
+  // Armadilha: o gateway serve a SPA e responde 302 -> /login (HTML 200) para
+  // chamadas /api sem cookie válido. O fetch SEGUE o redirect, então chega aqui
+  // com status 200 mas corpo HTML. Se o cliente devolvesse esse HTML como se
+  // fosse dados, qualquer .map/.find estouraria. Detecta e trata como não-auth.
+  const redirectedToLogin = res.redirected && /\/login(\?|$)/.test(res.url);
+  if (redirectedToLogin || ct.includes("text/html")) {
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.assign(`/login?next=${next}`);
+    }
+    throw new ApiError(401, "sessão expirada — redirecionando para o login");
+  }
   const body = ct.includes("application/json") ? await res.json() : await res.text();
   // O gateway do Hermes embrulha listas em {object:"list", data:[...]}
   // (/v1/models, /api/sessions, .../messages). O mock devolvia array puro — por

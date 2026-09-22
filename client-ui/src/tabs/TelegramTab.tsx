@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { Send, Check, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 
-type TgState = "idle" | "starting" | "awaiting" | "connected" | "error";
+type TgState = "idle" | "starting" | "awaiting" | "paired" | "activating" | "connected" | "error";
 
 // Conexão do Telegram — nativo do Hermes (plugins/platforms/telegram no upstream).
 // Fluxo real de onboarding do upstream (/api/messaging/telegram/onboarding/*):
@@ -49,7 +49,11 @@ export function TelegramTab() {
         if (!id) return;
         const s = await api.tgStatus(id).catch(() => null);
         if (!s) return;
-        if (s.status === "connected") { await finish(s.username); }
+        if (s.status === "connected") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setUsername(s.username);
+          setState("paired"); // autorizado — aguarda confirmação explícita
+        }
       }, 2500);
     } catch {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -57,11 +61,16 @@ export function TelegramTab() {
     }
   }
 
-  async function finish(user?: string) {
-    if (pollRef.current) clearInterval(pollRef.current);
-    if (pairingRef.current) await api.tgApply(pairingRef.current).catch(() => {});
-    setUsername(user);
-    setState("connected");
+  // Ação EXPLÍCITA: grava TELEGRAM_BOT_TOKEN e reinicia o gateway. Nunca automática.
+  async function activate() {
+    if (!pairingRef.current) return;
+    setState("activating");
+    try {
+      await api.tgApply(pairingRef.current);
+      setState("connected");
+    } catch {
+      setState("paired");
+    }
   }
 
   return (
@@ -75,9 +84,9 @@ export function TelegramTab() {
             <h2 className="text-base font-semibold text-title">Telegram</h2>
             <p className="text-sm text-text-50">Conecte um bot via @BotFather.</p>
           </div>
-          {state === "connected" && (
+          {(state === "connected" || state === "paired") && (
             <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-500/15 dark:text-green-400">
-              <Check size={13} /> Conectado
+              <Check size={13} /> {state === "connected" ? "Ativo" : "Autorizado"}
             </span>
           )}
         </div>
@@ -86,6 +95,16 @@ export function TelegramTab() {
           <div className="mt-5 rounded-lg border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
             Bot ativo{username ? <> como <b className="text-title">{username}</b></> : null}.
             Botões inline (escolha visual) já funcionam nas conversas.
+          </div>
+        ) : state === "paired" || state === "activating" ? (
+          <div className="mt-5 space-y-4">
+            <div className="rounded-lg border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
+              Bot autorizado{username ? <> (<b className="text-title">{username}</b>)</> : null}.
+              Confirme para ativar o canal — isso grava a configuração e <b>reinicia o serviço</b>.
+            </div>
+            <button className="btn w-full" disabled={state === "activating"} onClick={activate}>
+              {state === "activating" ? <><Loader2 size={16} className="animate-spin" /> Ativando…</> : "Confirmar e ativar"}
+            </button>
           </div>
         ) : state === "awaiting" ? (
           <div className="mt-5 flex flex-col items-center">

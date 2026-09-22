@@ -94,7 +94,9 @@ function AccountSection() {
 function ModelsSection() {
   const [models, setModels] = useState<ModelOption[]>([]);
   useEffect(() => {
-    api.listModels().then(setModels).catch(() => setModels([]));
+    api.listModels()
+      .then((m) => setModels(Array.isArray(m) ? m : []))
+      .catch(() => setModels([]));
   }, []);
   return (
     <div>

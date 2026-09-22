@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { MessageCircle, Check, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 
-type WaState = "idle" | "starting" | "awaiting_qr" | "connected" | "error";
+type WaState = "idle" | "starting" | "awaiting_qr" | "paired" | "activating" | "connected" | "error";
 
 // Conexão do WhatsApp por QR Code (bridge Baileys — decisão do cliente, ciente
 // do risco de ban por ser não-oficial). O bridge Node roda ISOLADO (processo
@@ -38,8 +38,15 @@ export function WhatsAppTab() {
   async function startPairing() {
     setState("starting");
     try {
-      const { pairing_id } = await api.waStart();
-      pairingRef.current = pairing_id;
+      const start = await api.waStart();
+      pairingRef.current = start.pairing_id;
+      // O upstream pode retornar "connected" já no start (creds.json no volume de
+      // um pareamento anterior). NÃO aplicar sozinho: pede confirmação explícita.
+      if (start.status === "connected") {
+        setNumber(start.account_phone || undefined);
+        setState("paired");
+        return;
+      }
       setState("awaiting_qr");
       // polling do status/QR a cada 2.5s
       pollRef.current = setInterval(async () => {
@@ -47,7 +54,12 @@ export function WhatsAppTab() {
         if (!id) return;
         const s = await api.waStatus(id).catch(() => null);
         if (!s) return;
-        if (s.status === "connected") { await finishConnected(s.account_phone || undefined); return; }
+        if (s.status === "connected") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setNumber(s.account_phone || undefined);
+          setState("paired"); // pareado — aguarda o usuário confirmar a ativação
+          return;
+        }
         if (s.status === "expired") { fail(); return; }
         if (s.qr_payload) await drawQr(s.qr_payload);
       }, 2500);
@@ -61,12 +73,18 @@ export function WhatsAppTab() {
     setState("error");
   }
 
-  async function finishConnected(phone?: string) {
-    if (pollRef.current) clearInterval(pollRef.current);
-    // grava .env (WHATSAPP_ENABLED=true) e reinicia o gateway
-    if (pairingRef.current) await api.waApply(pairingRef.current).catch(() => {});
-    setNumber(phone);
-    setState("connected");
+  // Ação EXPLÍCITA do usuário: grava o .env (WHATSAPP_ENABLED=true) e reinicia o
+  // gateway. Nunca automática — reiniciar o serviço é decisão consciente.
+  async function activate() {
+    if (!pairingRef.current) return;
+    setState("activating");
+    try {
+      await api.waApply(pairingRef.current);
+      setState("connected");
+    } catch {
+      // 409 (ainda não conectado) ou erro de rede: volta para pareado.
+      setState("paired");
+    }
   }
 
   return (
@@ -80,17 +98,27 @@ export function WhatsAppTab() {
             <h2 className="text-base font-semibold text-title">WhatsApp</h2>
             <p className="text-sm text-text-50">Pareie escaneando um QR Code.</p>
           </div>
-          {state === "connected" && (
+          {(state === "connected" || state === "paired") && (
             <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-500/15 dark:text-green-400">
-              <Check size={13} /> Conectado
+              <Check size={13} /> {state === "connected" ? "Ativo" : "Pareado"}
             </span>
           )}
         </div>
 
         {state === "connected" ? (
           <div className="mt-5 rounded-lg border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
-            Número pareado{number ? <> (<b className="text-title">{number}</b>)</> : null}.
+            Número pareado{number ? <> (<b className="text-title">{number}</b>)</> : null} e canal ativo.
             Enquetes (escolha visual) já funcionam nas conversas.
+          </div>
+        ) : state === "paired" || state === "activating" ? (
+          <div className="mt-5 space-y-4">
+            <div className="rounded-lg border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
+              Número pareado{number ? <> (<b className="text-title">{number}</b>)</> : null}.
+              Confirme para ativar o canal — isso grava a configuração e <b>reinicia o serviço</b>.
+            </div>
+            <button className="btn w-full" disabled={state === "activating"} onClick={activate}>
+              {state === "activating" ? <><Loader2 size={16} className="animate-spin" /> Ativando…</> : "Confirmar e ativar"}
+            </button>
           </div>
         ) : (
           <>
