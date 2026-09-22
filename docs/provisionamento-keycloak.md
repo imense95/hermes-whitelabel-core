@@ -14,8 +14,10 @@ tela. Descoberto lendo `hermes_cli/web_server.py` (`should_require_auth`,
   de `urban`/`platform`.
 - **Serviço `keycloak`** criado no projeto `hermes-whitelabel`:
   - imagem `quay.io/keycloak/keycloak:26.7.4` (estável mais recente)
-  - `command: start --optimized` (produção; **nunca `start-dev`** — banco em
-    memória, perde tudo no restart)
+  - `command: start` (produção; **nunca `start-dev`** — banco em memória,
+    perde tudo no restart). **NÃO usar `start --optimized`**: esse flag exige
+    uma imagem pré-construída com `kc.sh build`; na imagem de estoque ele
+    falha. `start` puro faz a auto-build no 1º boot.
   - banco: `KC_DB_URL=jdbc:postgresql://plataforma-db:5432/plataforma?currentSchema=keycloak`,
     user `keycloak_app`
   - atrás do Traefik: `KC_HOSTNAME=https://$(PRIMARY_DOMAIN)`,
@@ -35,9 +37,13 @@ vazamento que evitei na `urban_app`. Por isso o humano preenche.
 
 ## Finalização (humano)
 
-1. Definir a senha da role no banco (painel → `plataforma-db` → Credentials NÃO;
-   use um shell com `psql`), **a mesma** que vai no `KC_DB_PASSWORD`:
+1. **PRÉ-REQUISITO — a role NASCE SEM SENHA.** O Keycloak não sobe enquanto a
+   senha da role não existir no banco E for idêntica à do env. Rodar ANTES do
+   deploy, num shell com `psql`:
    `ALTER ROLE keycloak_app WITH PASSWORD '<senha-forte>';`
+   Conferir presença (nunca o valor):
+   `select rolpassword is not null from pg_authid where rolname='keycloak_app';`
+   → tem que dar `t`. Se der `f`, o boot falha com erro de auth no Postgres.
 2. Serviço `keycloak` → Environment → trocar os dois `COLE_AQUI`:
    `KC_DB_PASSWORD` (= a de cima) e `KC_BOOTSTRAP_ADMIN_PASSWORD`.
 3. Deploy do serviço `keycloak`. Primeiro boot cria as tabelas no schema e o
