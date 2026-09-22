@@ -195,13 +195,17 @@ def auditar(
             raise HTTPException(503, "auditoria indisponivel (DSN); acao recusada")
         return
 
+    # Nao faz INSERT direto: a Admin API conecta como a role do CLIENTE
+    # (<slug>_app), que nao tem USAGE em platform — e nao deve ter, e' isso
+    # que isola os schemas. A gravacao passa por uma funcao SECURITY DEFINER
+    # (infra/db/init/03-admin-audit-prod.sql) que deriva o tenant_slug de
+    # current_user. Consequencia: o slug enviado aqui e' ignorado pelo banco;
+    # um container comprometido nao consegue auditar em nome de outro cliente.
     try:
         with psycopg.connect(AUDIT_DSN, connect_timeout=5) as conn:
             conn.execute(
-                "INSERT INTO platform.admin_audit "
-                "(operador, tenant_slug, acao, detalhe, resultado, erro) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (registro["operador"], registro["tenant_slug"], registro["acao"],
+                "SELECT platform.registrar_admin_audit(%s, %s, %s, %s, %s)",
+                (registro["operador"], registro["acao"],
                  registro["detalhe"], registro["resultado"], registro["erro"]),
             )
     except Exception as exc:  # noqa: BLE001 — qualquer falha aqui e' fatal para mutacao

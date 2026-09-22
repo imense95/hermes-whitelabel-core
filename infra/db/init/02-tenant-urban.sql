@@ -32,9 +32,14 @@ CREATE SCHEMA IF NOT EXISTS urban AUTHORIZATION urban_app;
 GRANT CONNECT ON DATABASE plataforma TO urban_app;
 
 -- O isolamento e' isto: negar tudo que nao e' o proprio schema.
+-- Em platform, o cliente fica com USAGE (resolver nomes) e NADA mais: a
+-- unica coisa que ele alcanca la e' a funcao de auditoria, cujo GRANT fica
+-- em 03-admin-audit-prod.sql. Sem SELECT, USAGE nao le tabela nenhuma.
 REVOKE ALL ON SCHEMA public   FROM urban_app;
 REVOKE ALL ON SCHEMA platform FROM urban_app;
-REVOKE ALL ON ALL TABLES IN SCHEMA platform FROM urban_app;
+GRANT  USAGE ON SCHEMA platform TO urban_app;
+REVOKE ALL ON ALL TABLES    IN SCHEMA platform FROM urban_app;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA platform FROM urban_app;
 
 -- Impede que um cliente futuro crie objeto no schema public compartilhado.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
