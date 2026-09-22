@@ -37,6 +37,37 @@ vazamento que evitei na `urban_app`. Por isso o humano preenche.
 
 ## Finalização (humano)
 
+**ARMADILHA RESOLVIDA (set/2026): `password authentication failed for user
+"keycloak_app"`.** O Keycloak buildava, subia o Quarkus e morria ao conectar no
+Postgres — 4 bugs em sequência antes de achar a causa real:
+
+1. `start --optimized` na imagem de estoque → falha (exige `kc.sh build` prévio).
+2. `command` no EasyPanel é envolto em `/bin/sh -c`; `start` puro vira
+   `/bin/sh -c start` e "start" não é executável. **Use o caminho completo:**
+   `command: /opt/keycloak/bin/kc.sh start`.
+3. A role nasce sem senha (ver acima).
+4. **A senha do `KC_DB_PASSWORD` (env) e a do `ALTER ROLE` (banco) não batiam** —
+   caractere especial mangleado entre o paste no painel e o `psql`. Diagnóstico
+   só foi possível com SSH root + `docker logs` do container `Exited (1)` (o
+   `service logs` do swarm trava; `getServiceError`/`queryServiceLogs` do painel
+   não servem).
+
+**Correção à prova de erro (com SSH root), sem a senha passar pelo contexto:**
+ler o valor exato que o container do Keycloak recebeu e aplicá-lo na role:
+```sh
+kc=$(docker ps -a --filter name=hermes-whitelabel_keycloak --format '{{.ID}}' | head -1)
+PW=$(docker inspect "$kc" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^KC_DB_PASSWORD=//p' | head -1)
+pg=$(docker ps --filter name=hermes-whitelabel_plataforma-db --format '{{.ID}}' | head -1)
+printf "ALTER ROLE keycloak_app WITH PASSWORD :'pw';\n" | \
+  docker exec -i -e PGPASSWORD="$PGADMIN" "$pg" \
+  psql -U plataforma_admin -d plataforma -v ON_ERROR_STOP=1 -v pw="$PW"
+```
+`:'pw'` só expande via stdin/arquivo, **não** com `psql -c`. As duas pontas ficam
+idênticas por construção, qualquer que seja o caractere. Depois: redeploy.
+Confirmado de pé: raiz HTTP 302, container `Up` além do minuto de crash.
+`/health/ready` fica na porta de management 9000 (não na 8080 do domínio) → 404
+no domínio público é esperado.
+
 1. **PRÉ-REQUISITO — a role NASCE SEM SENHA.** O Keycloak não sobe enquanto a
    senha da role não existir no banco E for idêntica à do env. Rodar ANTES do
    deploy, num shell com `psql`:
