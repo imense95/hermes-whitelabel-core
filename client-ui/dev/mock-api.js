@@ -35,6 +35,14 @@ var MODELS = [
     { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", provider: "google" },
 ];
 var ACCOUNT = { name: "Cliente Urban", email: "contato@urbanpassageiro.com.br", plan: "Ativo" };
+// Estado de canais para o mock (simula pareamento do WhatsApp em memória).
+var channels = {
+    telegram: { connected: false, username: undefined },
+    whatsapp: { state: "disconnected", number: undefined },
+};
+var waPolls = 0;
+// QR de exemplo (conteúdo qualquer — o front desenha como QR de verdade).
+var SAMPLE_QR = "2@mockWhatsAppPairingPayload/ExemploParaDesenvolvimentoVisual==,AbCdEf123==,XyZ==";
 function send(res, body, status) {
     if (status === void 0) { status = 200; }
     res.statusCode = status;
@@ -64,6 +72,30 @@ export function mockApi() {
                     return send(res, { options: MODELS });
                 if (url === "/v1/health")
                     return send(res, { status: "ok (mock)" });
+                // --- Canais (fatia 2, mock) ---
+                if (url === "/api/channels")
+                    return send(res, channels);
+                if (url === "/api/channels/telegram" && req.method === "POST") {
+                    channels.telegram = { connected: true, username: "@urban_bot" };
+                    return send(res, { ok: true });
+                }
+                if (url === "/api/channels/whatsapp/start" && req.method === "POST") {
+                    channels.whatsapp.state = "awaiting_qr";
+                    waPolls = 0;
+                    return send(res, { state: "awaiting_qr", qr: SAMPLE_QR });
+                }
+                if (url === "/api/channels/whatsapp/qr") {
+                    // Simula pareamento: após alguns polls o número "conecta".
+                    if (channels.whatsapp.state === "awaiting_qr") {
+                        waPolls += 1;
+                        if (waPolls >= 3) {
+                            channels.whatsapp = { state: "connected", number: "+55 65 99999-0000" };
+                            return send(res, { state: "connected" });
+                        }
+                        return send(res, { state: "awaiting_qr", qr: SAMPLE_QR });
+                    }
+                    return send(res, { state: channels.whatsapp.state });
+                }
                 if (req.method === "POST" && url.endsWith("/chat")) {
                     return send(res, {
                         ok: true,

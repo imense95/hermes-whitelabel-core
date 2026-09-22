@@ -33,6 +33,16 @@ export interface Account {
   plan?: string;
 }
 
+export interface ChannelStatus {
+  telegram: { connected: boolean; username?: string };
+  whatsapp: { state: "disconnected" | "awaiting_qr" | "connected"; number?: string };
+}
+
+export interface WhatsAppQr {
+  state: "awaiting_qr" | "connected" | "starting";
+  qr?: string; // string do QR (renderizada em <canvas> no front) ou dataURL
+}
+
 export interface RunApprovalRequest {
   run_id: string;
   kind: "approval" | "choice";
@@ -94,6 +104,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ choice: choiceId }),
     }),
+
+  // --- Canais (fatia 2) ---
+  // Rotas do produto (não do core upstream). O gateway servirá o client-ui na
+  // mesma origin; /api/channels/* fica atrás do gate OIDC (cookie Keycloak).
+  channelStatus: () => req<ChannelStatus>("/api/channels"),
+  // Token do Telegram é segredo → vai para o env da instância pela Admin API
+  // (/v1/credentials, allowlist inclui TELEGRAM_BOT_TOKEN). O front nunca guarda.
+  connectTelegram: (token: string) =>
+    req<{ ok: boolean }>("/api/channels/telegram", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  // Dispara/consulta o pareamento do WhatsApp (bridge Baileys isolado).
+  whatsappQr: () => req<WhatsAppQr>("/api/channels/whatsapp/qr"),
+  whatsappStart: () => req<WhatsAppQr>("/api/channels/whatsapp/start", { method: "POST" }),
 
   health: () => req<{ status: string }>("/v1/health"),
 };
