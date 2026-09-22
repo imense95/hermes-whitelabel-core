@@ -79,9 +79,16 @@ Dividido em **duas janelas separadas**, por decisão do Herbert:
 
 ### Janela 1 — passo 4 isolado, sem restart, o agente executa sozinho
 - Servir o `dist/` do client-ui na origin da Urban.
-- Pré-condição confirmada: **não reinicia o gateway nem derruba sessão**.
-- Ao terminar: capturar **prova** de que a SPA responde na origin da Urban e
-  avisar o Herbert para confirmação visual. Só depois disso a janela 2 abre.
+- **CORREÇÃO (executado):** a premissa "sem restart" NÃO se sustentou. No
+  container real (`6ab933598492`) `HERMES_WEB_DIST=/opt/hermes/.../web_dist`
+  (default `root:root` 755; o gateway roda uid 10000 e não escreve ali) e o env
+  é lido só no boot → apontar para outro caminho exige restart. Servir o
+  client-ui direito = **assar na imagem** (opção A escolhida pelo Herbert).
+- **PREPARADO nesta janela (sem deploy):** `image/Dockerfile` ganhou estágio
+  `node:20` que builda o client-ui e `COPY --from` para `/opt/product/client-ui`,
+  com `ENV HERMES_WEB_DIST=/opt/product/client-ui`. Reversível por instância
+  (sobrepor/remover a env no EasyPanel). CI inalterado. Build reproduzido limpo.
+- **Rebuild+redeploy movidos para a janela 2** (é evento de restart).
 
 ### Janela 2 — agrupar tudo que exige restart do gateway (agendada pelo Herbert)
 Só entra quando o Herbert tiver **o número de WhatsApp dedicado em mãos** e um
