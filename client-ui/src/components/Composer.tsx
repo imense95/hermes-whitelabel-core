@@ -23,7 +23,11 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
   const pickRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.listModels().then((m) => { setModels(m); if (m[0]) setModel(m[0].id); }).catch(() => setModels([]));
+    api.listModels().then((m) => {
+      const list = Array.isArray(m) ? m : [];
+      setModels(list);
+      if (list[0]) setModel(list[0].id);
+    }).catch(() => setModels([]));
   }, []);
 
   useEffect(() => {

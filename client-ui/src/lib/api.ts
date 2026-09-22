@@ -68,10 +68,32 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     ...init,
   });
-  if (res.status === 401) throw new ApiError(401, "não autenticado");
+  // Não autenticado: o gateway serve a SPA ANTES do login, então uma chamada
+  // /api na inicialização volta 401 JSON {error:"unauthenticated", login_url}.
+  // Redireciona para o gate de login (Keycloak) em vez de deixar a app quebrar.
+  if (res.status === 401 || res.status === 403) {
+    let loginUrl = "/login";
+    try {
+      const j = await res.clone().json();
+      if (j && typeof j.login_url === "string") loginUrl = j.login_url;
+    } catch { /* corpo não-JSON: usa /login */ }
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.assign(`${loginUrl}?next=${next}`);
+    }
+    throw new ApiError(res.status, "não autenticado");
+  }
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
   const ct = res.headers.get("content-type") || "";
-  return (ct.includes("application/json") ? await res.json() : (await res.text())) as T;
+  const body = ct.includes("application/json") ? await res.json() : await res.text();
+  // O gateway do Hermes embrulha listas em {object:"list", data:[...]}
+  // (/v1/models, /api/sessions, .../messages). O mock devolvia array puro — por
+  // isso funcionava no mock e quebrava no real (models.find is not a function).
+  // Desembrulha de forma central: se veio {data:[...]}, entrega o array.
+  if (body && typeof body === "object" && !Array.isArray(body) && Array.isArray((body as any).data)) {
+    return (body as any).data as T;
+  }
+  return body as T;
 }
 
 export class ApiError extends Error {
@@ -89,8 +111,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
-  listProjects: () => req<Project[]>("/api/projects"),
-  getAccount: () => req<Account>("/api/account"),
+  // NOTA: o Hermes NÃO tem endpoints /api/projects nem /api/account (eram mock
+  // da fatia 1). "Projetos" não é conceito do core → lista vazia sem rede.
+  // "Conta" vem da identidade OIDC (cookie), não de um endpoint.
+  listProjects: async (): Promise<Project[]> => [],
+  getAccount: async (): Promise<Account | null> => null,
   // Stream de resposta (SSE). Devolve o Response para o chamador ler o corpo.
   streamChat: (id: string, content: string, signal?: AbortSignal) =>
     fetch(`/api/sessions/${encodeURIComponent(id)}/chat/stream`, {

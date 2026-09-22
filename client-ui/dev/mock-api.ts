@@ -2,13 +2,8 @@ import type { Plugin } from "vite";
 
 // Backend de MENTIRA para desenvolvimento visual (caminho A). Ativado só quando
 // VITE_MOCK=1. Middleware do dev server — NÃO entra no build de produção.
-
-const PROJECTS = [
-  { id: "pimjo", name: "Pimjo", count: 3 },
-  { id: "meku", name: "Meku", count: 2 },
-  { id: "formbold", name: "Formbold", count: 4 },
-  { id: "urban", name: "Urban Passageiro", count: 3 },
-];
+// NOTA: /api/projects e /api/account NÃO existem no gateway real — foram
+// removidos daqui para o mock não voltar a divergir do Hermes de produção.
 
 const SESSIONS = [
   { session_id: "s_mkt", title: "Marketing — Urban Passageiro", group: "Hoje", updated_at: "2026-09-22T17:40:00Z", message_count: 12 },
@@ -41,8 +36,6 @@ const MODELS = [
   { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", provider: "google" },
 ];
 
-const ACCOUNT = { name: "Cliente Urban", email: "contato@urbanpassageiro.com.br", plan: "Ativo" };
-
 // Estado de mensageria para o mock (simula onboarding real do upstream).
 const SAMPLE_QR = "2@mockWhatsAppPairingPayload/ExemploParaDesenvolvimentoVisual==,AbCdEf123==,XyZ==";
 const wa = { polls: 0, connected: false };
@@ -62,12 +55,11 @@ export function mockApi(): Plugin {
         const url = (req.url || "").split("?")[0];
         if (!url.startsWith("/api") && !url.startsWith("/v1")) return next();
 
-        if (url === "/api/sessions") return send(res, SESSIONS);
-        if (url === "/api/projects") return send(res, PROJECTS);
-        if (url === "/api/account") return send(res, ACCOUNT);
-        const m = url.match(/^\/api\/sessions\/([^/]+)\/messages$/);
-        if (m) return send(res, MESSAGES[decodeURIComponent(m[1])] || []);
-        if (url === "/v1/models") return send(res, MODELS);
+        // Espelha a forma REAL do gateway: listas embrulhadas em {object,data}.
+        if (url === "/api/sessions") return send(res, { object: "list", data: SESSIONS });
+        let mm = url.match(/^\/api\/sessions\/([^/]+)\/messages$/);
+        if (mm) return send(res, { object: "list", session_id: decodeURIComponent(mm[1]), data: MESSAGES[decodeURIComponent(mm[1])] || [] });
+        if (url === "/v1/models") return send(res, { object: "list", data: MODELS });
         if (url === "/api/model/options") return send(res, { options: MODELS });
         if (url === "/v1/health") return send(res, { status: "ok (mock)" });
 
