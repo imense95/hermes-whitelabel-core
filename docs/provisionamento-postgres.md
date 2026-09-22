@@ -134,48 +134,56 @@ tarefa do cliente.
    interna. Não exponha para "facilitar" acesso externo; use um túnel
    pontual.
 
-### Armadilha: "role plataforma_admin does not exist" é mentira
+### EM ABERTO: "database plataforma_admin does not exist" ao trocar a senha
 
 Ao trocar a senha pela tela de Credentials, o painel devolve:
 
 ```
-psql: error: ... /var/run/postgresql/.s.PGSQL:5432 failed
-FATAL: database "plataforma_admin" does not exist
+psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432"
+failed: FATAL: database "plataforma_admin" does not exist
 ```
 
-**A role existe e é superusuário.** Verificado direto em `pg_roles`:
+**O que está confirmado:** a role existe e é superusuário. Lido de `pg_roles`
+no banco real:
 
 ```
 plataforma_admin  super=true login=true
 urban_app         super=false login=true
 ```
 
-A mensagem fala do **banco**, não da role. O painel executa `psql -U <user>`
-**sem `-d`**, e sem `-d` o `psql` usa como banco padrão o *nome do usuário*.
-Existe o banco `plataforma`; não existia `plataforma_admin`. O `psql` tentou
-abrir um banco homônimo do usuário, não achou, e abortou antes de rodar o
-`ALTER ROLE`.
+Então a mensagem fala do **banco**, não da role — o `psql` falha ao abrir a
+conexão, antes de executar qualquer `ALTER ROLE`.
 
-Isso acontece **sempre** que `user` ≠ `databaseName` na criação do serviço
-Postgres do EasyPanel. Se ambos se chamassem `plataforma`, nunca apareceria.
+**Hipótese testada e REPROVADA.** Supus que o painel rodava `psql -U <user>`
+sem `-d`, caindo no default "banco com o nome do usuário". Criei o banco vazio
+`plataforma_admin`. **O erro continuou igual.**
 
-**Correção aplicada:** criado o banco vazio `plataforma_admin`, dono
-`plataforma_admin`, só para o default do `psql` cair em lugar válido.
+Pior: a evidência de que a hipótese era fraca estava no próprio teste. O
+script reportou `BANCO HOMONIMO: ja existia` e o `ANTES` retornou `1` com
+sucesso — ou seja, no momento da verificação aquele caminho **já funcionava**,
+e mesmo assim o painel continua falhando. O teste validou uma conexão TCP de
+outro container; o painel usa **socket Unix dentro do container do Postgres**.
+São caminhos diferentes, e eu tratei um como prova do outro.
 
-Reproduzido e reprovado no mesmo container:
+**Estado:** banco vazio `plataforma_admin` existe (inofensivo, sem schema e
+sem dado). A troca de senha pelo painel **continua quebrada**. A senha atual
+segue em uso.
 
-| | |
-|---|---|
-| antes | `FATAL: database "plataforma_admin" does not exist` |
-| depois | `plataforma_admin\|plataforma_admin` |
-| schemas | `urban,platform` — intactos |
+**Próximas hipóteses, não testadas:**
 
-O banco novo fica **vazio para sempre**: não tem schema de cliente, não tem
-dado. É um alvo de aterrissagem para o default do `psql`. Custo em disco é
-o de um template de catálogo.
+1. O painel executa o `psql` num container auxiliar cujo socket Unix aponta
+   para um cluster diferente do `plataforma-db`.
+2. O comando roda como o usuário de SO `postgres`, e o mapeamento
+   socket/peer não corresponde à role do painel.
+3. O painel guarda o nome do banco em outro campo e monta o comando com o
+   valor errado (bug do painel quando `user` ≠ `databaseName`).
 
-**Para clientes futuros:** crie o serviço Postgres com `user` igual a
-`databaseName`, e essa classe de erro não aparece.
+Para distinguir, é preciso ver o comando real — `docker service logs` do
+`plataforma-db` no host, no momento da tentativa. Sem acesso SSH, não dá
+para fechar daqui.
+
+**Prevenção em clientes novos:** criar o serviço Postgres com `user` **igual**
+a `databaseName`. Todas as hipóteses acima dependem de eles diferirem.
 
 ### Por que a rotação do `plataforma_admin` não foi feita por API
 
