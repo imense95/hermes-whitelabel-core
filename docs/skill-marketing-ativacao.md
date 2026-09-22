@@ -31,10 +31,17 @@ Já existem: `DATABASE_URL`, `API_SERVER_KEY`. Acrescentar (via
 serviço no EasyPanel — nunca sobrescrever o arquivo):
 
 ```
-GEMINI_API_KEY=...                  # Nano Banana (imagem) + Gemini (prompts/legendas)
+GEMINI_API_KEY=...                  # Gemini: prompts, legendas, direção criativa (NÃO gera a arte)
+NANO_BANANA_API_KEY=...             # ttapi.io (dashboard.ttapi.io): RENDERIZA o PNG da arte. Sem ela o post para antes da imagem.
 MARKETING_GOOGLE_CLIENT_ID=...
 MARKETING_GOOGLE_CLIENT_SECRET=...
 ```
+
+> **São dois serviços distintos, não confundir:** `GEMINI_API_KEY` escreve o
+> texto/prompt; `NANO_BANANA_API_KEY` (ttapi.io) gera a imagem. Faltando a do
+> Nano Banana, o onboarding e o calendário completam, mas a geração para com
+> "NANO_BANANA_API_KEY ausente". Nano Banana **não** é um modelo da tela MODELS
+> do dashboard (aquilo é só LLM/gateway) — é env var lida direto pelo motor.
 
 Depois: **Deploy** do serviço (o Hermes lê `/opt/data/.env` no boot).
 
