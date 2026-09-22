@@ -6,6 +6,7 @@
   "description": "Front-end do cliente final (white-label) — separado do dashboard de dev, mesma instância/backend.",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --mode mock",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit"

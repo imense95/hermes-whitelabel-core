@@ -5,6 +5,21 @@ backend (gateway do Hermes). Fatia 1.
 
 ## Rodar em dev (contra uma instância real)
 
+## Caminho A — ver o visual localmente SEM token, SEM instância (mock)
+
+```bash
+cd client-ui
+npm install
+npm run dev:mock     # http://localhost:5174
+```
+
+Um backend de mentira (em `dev/mock-api.ts`, ativo só com `VITE_MOCK=1`)
+responde `/api/sessions`, `/v1/models` etc. com dados de exemplo. As abas
+**Sessões** e **Tokens** ficam populadas e clicáveis. O mock é middleware do
+dev server — **não entra no build de produção**. Serve para aprovar o visual.
+
+## Rodar em dev contra uma instância real
+
 ```bash
 cd client-ui
 npm install
