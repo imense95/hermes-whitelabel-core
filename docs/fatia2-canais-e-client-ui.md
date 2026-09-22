@@ -46,45 +46,63 @@
   - QR: o bridge emite `emitPairEvent({event:'qr', qr})` e imprime no terminal
     (`qrcode-terminal`). Credencial: `WHATSAPP_ENABLED=true` + parear pelo QR.
 
-## O único trecho que NÃO existe upstream (é o nosso trabalho de código)
+## O QR já é exposto por REST no upstream (corrigido)
 
-O QR do WhatsApp e o estado de pareamento **não são expostos por REST** — hoje
-saem no log/terminal e o pareamento de usuário é por código no DM do dono. Para
-a aba de WhatsApp do client-ui mostrar o QR, precisamos de **um endpoint novo**
-(no core, atrás do gate OIDC) que:
-1. dispare o start do bridge (se não estiver rodando);
-2. faça proxy do último `qr` emitido (e do estado: `aguardando_qr` →
-   `conectado`), lendo o pair-event/health do bridge.
+> **Nota (reconhecimento 2):** a suposição inicial de que precisaríamos escrever
+> um endpoint de QR estava **errada**. O upstream já expõe QR + estado de
+> pareamento por REST (`/api/messaging/whatsapp/onboarding/{id}` →
+> `qr_payload`+`status`). O bridge é chamado internamente em `--pair-only
+> --pair-json`. **Nenhum código novo no core.** O client-ui já foi alinhado a
+> essas rotas (commit `e24585f`).
 
-Telegram não precisa de QR — só do token; a "conexão" é o bot passar a responder.
+Telegram também tem onboarding por REST (deep-link + `qr_payload` + polling),
+não exige token colado no front.
 
-## Plano da fatia 2 (ordem proposta)
+## Plano da fatia 2 (estado real)
 
-1. **client-ui → endpoints reais dos canais** (sem risco; app separado):
-   - `GET /api/channels` (status de cada canal: conectado?/pendente),
-   - `POST /api/channels/telegram` (grava token via Admin API `/v1/credentials`,
-     allowlist já tem que incluir `TELEGRAM_BOT_TOKEN`),
-   - `GET /api/channels/whatsapp/qr` (novo endpoint de QR acima),
-   - mock correspondente para o caminho A continuar funcionando.
-2. **Endpoint de QR do WhatsApp** no core (o trecho novo acima) + teste.
-3. **Habilitar os plugins de plataforma na imagem/instância** (config, não código):
-   `plugins.enabled` += telegram/whatsapp; bridge Node já vem na imagem upstream.
-4. **Servir o client-ui na origin da Urban** — build `dist/` servido pelo mesmo
-   gateway (cookie OIDC do Keycloak libera `/api/*`), rota tipo `/app`.
-5. **Provar ponta a ponta** na Urban: token do Telegram (Herbert cadastra) → bot
-   responde; QR do WhatsApp → parear número dedicado → mensagem entra/sai.
+1. **client-ui → endpoints reais dos canais** — ✅ **FEITO** (commits `a72379f`,
+   `e24585f`). Abas ligadas a `/api/messaging/*`, QR renderizado, mock provado.
+2. **Endpoint de QR do WhatsApp** — ✅ **já existia** no upstream, nada a escrever.
+3. **Habilitar os plugins de plataforma na instância** (config, não código):
+   `plugins.enabled` += telegram/whatsapp. **Reinicia o gateway.**
+4. **Servir o client-ui na origin da Urban** — build `dist/` servido na mesma
+   origin (cookie OIDC libera `/api/*`). **Pré-condição:** só é sem-restart se
+   `HERMES_WEB_DIST` da instância apontar para caminho **gravável** em
+   `/opt/data` (o `WEB_DIST` é lido por request, mas o env é lido no import e o
+   default fica sob `/opt/hermes` read-only). A verificar no container.
+5. **Provar ponta a ponta** na Urban: Telegram responde; QR do WhatsApp →
+   parear número dedicado → mensagem entra/sai.
+
+## Sequência de execução acordada (set/2026, com o idealizador)
+
+Dividido em **duas janelas separadas**, por decisão do Herbert:
+
+### Janela 1 — passo 4 isolado, sem restart, o agente executa sozinho
+- Servir o `dist/` do client-ui na origin da Urban.
+- Pré-condição confirmada: **não reinicia o gateway nem derruba sessão**.
+- Ao terminar: capturar **prova** de que a SPA responde na origin da Urban e
+  avisar o Herbert para confirmação visual. Só depois disso a janela 2 abre.
+
+### Janela 2 — agrupar tudo que exige restart do gateway (agendada pelo Herbert)
+Só entra quando o Herbert tiver **o número de WhatsApp dedicado em mãos** e um
+**horário tranquilo** para reiniciar o serviço da Urban. Três coisas juntas:
+- **Passo 3** — habilitar os plugins de Telegram e WhatsApp na instância.
+- **Passo 5** — provar o fluxo ponta a ponta com credenciais reais.
+- **Correção do `caption-writer.js`** — trocar o modelo descontinuado
+  (`gemini-2.0-flash`) e limpar a sujeira do container (env vars
+  `GEMINI_MODEL_TEXT`/`MARKETING_MOTOR_DIR`/`MARKETING_NODE`, `motor-patch/`,
+  `bin/node-wrapper.sh`).
 
 ## Dependências do Herbert (regra de credencial)
 
-- **Token do Telegram** (@BotFather) — Herbert cadastra pela tela; nunca no chat.
-- **Número dedicado de WhatsApp** para parear (risco de ban assumido).
-- Habilitar canais **reinicia o gateway** → derruba a sessão do profile
-  `marketing` momentaneamente (aceitável, reconecta).
+- **Token do Telegram** (@BotFather) — via onboarding REST/tela; nunca no chat.
+- **Número dedicado de WhatsApp** para parear (risco de ban assumido) — gate da
+  janela 2.
 
-## Pendências herdadas (antes de "fatia 2 pronta")
+## Pendências herdadas (dentro da janela 2)
 
 - `caption-writer.js` hardcoded `gemini-2.0-flash` (descontinuado) → corrigir no
   repo do catálogo + rebuild; é o único passo do pipeline de marketing que falta.
 - Limpar sujeira que o agente deixou no container Urban (env vars
   `GEMINI_MODEL_TEXT`/`MARKETING_MOTOR_DIR`/`MARKETING_NODE`, `motor-patch/`,
-  `bin/node-wrapper.sh`) — requer restart do gateway (casa com o restart do item 3).
+  `bin/node-wrapper.sh`).
