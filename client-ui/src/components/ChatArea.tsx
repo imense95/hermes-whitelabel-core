@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Trash2, Copy, Sparkles, Wrench, Check, Loader2, AlertTriangle, WifiOff } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { MoreHorizontal, Trash2, Copy, Sparkles, Wrench, Check, Loader2, AlertTriangle, WifiOff, Menu, ArrowDown } from "lucide-react";
 import { Composer } from "./Composer";
 import { ChoiceCards } from "./ChoiceCards";
 import { useChatSession, type PendingRequest, type UiMessage } from "../lib/useChatSession";
@@ -17,11 +17,13 @@ const APPROVAL_LABELS: Record<string, { label: string; description: string }> = 
 // Com sessão → cabeçalho + mensagens (streaming) + cartões de aprovação/escolha.
 export function ChatArea({
   sessionId,
+  onOpenNav,
   onSessionCreated,
   onTitle,
   onDeleted,
 }: {
   sessionId: string | null;
+  onOpenNav?: () => void;
   onSessionCreated: (storedId: string) => void;
   onTitle?: (storedId: string, title: string) => void;
   onDeleted?: (storedId: string) => void;
@@ -29,11 +31,31 @@ export function ChatArea({
   const chat = useChatSession(sessionId, onSessionCreated, onTitle);
   const [menuOpen, setMenuOpen] = useState(false);
   const [conn, setConn] = useState<ConnState>(gateway.state);
+  const [atBottom, setAtBottom] = useState(true);
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // "Perto do fim" = a menos de 120px do fundo. Enquanto o usuário estiver aí,
+  // seguimos a resposta; se ele rolou pra cima pra reler, paramos de sequestrar.
+  const checkAtBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setAtBottom(near);
+  }, []);
+
+  const scrollToEnd = useCallback((behavior: ScrollBehavior = "smooth") => {
+    endRef.current?.scrollIntoView({ behavior });
+    setAtBottom(true);
+  }, []);
+
   useEffect(() => gateway.onState(setConn), []);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages, chat.requests]);
+  // Auto-scroll só quando o usuário já está no fim (evita roubar a rolagem
+  // durante o streaming se ele estiver lendo mais acima).
+  useEffect(() => { if (atBottom) endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages, chat.requests, atBottom]);
+  // Ao trocar de conversa, ancora no fim instantaneamente.
+  useEffect(() => { setAtBottom(true); endRef.current?.scrollIntoView({ behavior: "auto" }); }, [sessionId]);
   useEffect(() => {
     function onDoc(e: MouseEvent) { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); }
     document.addEventListener("mousedown", onDoc);
@@ -73,8 +95,11 @@ export function ChatArea({
         </div>
       )}
       {!empty && (
-        <div className="flex items-center justify-between border-b border-stroke px-6 py-3">
-          <span className="truncate text-sm font-medium text-title">{chat.title || "Nova conversa"}</span>
+        <div className="flex items-center justify-between border-b border-stroke px-4 py-3 pt-safe md:px-6">
+          <div className="flex min-w-0 items-center gap-1">
+            <button onClick={onOpenNav} className="-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-text-100 hover:bg-background-100 md:hidden" title="Menu"><Menu size={20} /></button>
+            <span className="truncate text-sm font-medium text-title">{chat.title || "Nova conversa"}</span>
+          </div>
           <div className="flex items-center gap-2">
             {chat.running && <span className="flex items-center gap-1 text-xs text-text-50"><Loader2 size={13} className="animate-spin" /> respondendo</span>}
             <div className="relative" ref={menuRef}>
@@ -92,7 +117,8 @@ export function ChatArea({
       )}
 
       {empty ? (
-        <div className="flex flex-1 flex-col items-center justify-center px-6">
+        <div className="relative flex flex-1 flex-col items-center justify-center px-6">
+          <button onClick={onOpenNav} className="absolute left-3 top-3 flex h-10 w-10 items-center justify-center rounded-lg text-text-100 hover:bg-background-100 md:hidden" title="Menu"><Menu size={20} /></button>
           <h1 className="text-3xl font-semibold text-primary">Como posso ajudar?</h1>
           <p className="mt-3 max-w-md text-center text-sm text-text-50">
             Seu assistente — respostas, conteúdo e conexão dos seus canais, tudo num só lugar.
@@ -101,7 +127,7 @@ export function ChatArea({
         </div>
       ) : (
         <>
-          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+          <div ref={scrollRef} onScroll={checkAtBottom} className="relative flex-1 space-y-5 overflow-y-auto px-4 py-6 md:px-6">
             {chat.loading && <p className="text-sm text-text-50">Carregando conversa…</p>}
             {chat.messages.map((m) => <Bubble key={m.key} m={m} />)}
             {chat.requests.map((r) => (
@@ -116,7 +142,17 @@ export function ChatArea({
             )}
             <div ref={endRef} />
           </div>
-          <div className="border-t border-stroke p-4">{composer}</div>
+          {/* Botão "ir para o fim": aparece só quando o usuário rolou pra cima.
+              Durante o streaming isso evita roubar a leitura e dá o controle de volta. */}
+          {!atBottom && (
+            <button onClick={() => scrollToEnd("smooth")}
+              className="absolute bottom-24 left-1/2 z-10 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-stroke bg-panel text-text-100 shadow-pop transition hover:text-primary"
+              title="Ir para as mensagens novas">
+              <ArrowDown size={18} />
+              {chat.running && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-primary" />}
+            </button>
+          )}
+          <div className="border-t border-stroke p-4 pb-safe-4">{composer}</div>
         </>
       )}
     </section>
@@ -176,8 +212,8 @@ function ClarifyQuestion({ question, choices, answered, onAnswer }: { question: 
           <p className="mb-3 text-sm font-medium text-title">{question}</p>
           <div className="flex gap-2">
             <input value={free} onChange={(e) => setFree(e.target.value)} onKeyDown={async (e) => { if (e.key === "Enter" && free.trim()) { await onAnswer(free.trim()); setDone(free.trim()); } }}
-              placeholder="Sua resposta…" className="flex-1 rounded-lg border border-stroke bg-background-50 px-3 py-2 text-sm text-title outline-none focus:border-primary" />
-            <button className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={!free.trim()}
+              placeholder="Sua resposta…" className="min-w-0 flex-1 rounded-lg border border-stroke bg-background-50 px-3 py-2.5 text-base text-title outline-none focus:border-primary sm:text-sm" />
+            <button className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={!free.trim()}
               onClick={async () => { await onAnswer(free.trim()); setDone(free.trim()); }}>Responder</button>
           </div>
         </div>
@@ -190,7 +226,7 @@ function Bubble({ m }: { m: UiMessage }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-primary px-4 py-2.5 text-sm leading-relaxed text-white">{m.text}</div>
+        <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm leading-relaxed text-white sm:max-w-[75%]">{m.text}</div>
       </div>
     );
   }
@@ -204,13 +240,13 @@ function Bubble({ m }: { m: UiMessage }) {
     );
   }
   return (
-    <div className="flex max-w-[85%] gap-3">
+    <div className="flex max-w-full gap-2 sm:max-w-[85%] sm:gap-3">
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
         <Sparkles size={16} />
       </span>
       <div className="min-w-0">
         <div className="mb-1 text-xs font-medium text-text-50">Assistente</div>
-        <div className="whitespace-pre-wrap rounded-2xl bg-background-50 px-4 py-2.5 text-sm leading-relaxed text-text-200">
+        <div className="whitespace-pre-wrap break-words rounded-2xl bg-background-50 px-4 py-2.5 text-sm leading-relaxed text-text-200">
           {m.text}
           {m.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-primary/60 align-text-bottom" />}
         </div>

@@ -46,9 +46,9 @@ export function ChoiceCards({
 
   return (
     <div className={`rounded-xl border border-stroke bg-panel p-4 shadow-panel border-l-4 ${border}`}>
-      <p className="mb-1 text-sm font-medium text-title">{prompt}</p>
+      <p className="mb-1 break-words text-sm font-medium text-title">{prompt}</p>
       {detail && (
-        <pre className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-background-50 px-3 py-2 font-mono text-xs text-text-200">{detail}</pre>
+        <pre className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background-50 px-3 py-2 font-mono text-xs text-text-200">{detail}</pre>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {options.map((opt) => {

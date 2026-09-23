@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, PanelLeft, PencilLine, Search, Settings, LogOut, Monitor, Sun, Moon, RefreshCw } from "lucide-react";
+import { Sparkles, PanelLeft, PencilLine, Search, Settings, LogOut, Monitor, Sun, Moon, RefreshCw, X } from "lucide-react";
 import { api, type AuthMe, type SessionRow } from "../lib/api";
 import { useTheme } from "../lib/theme";
 
@@ -26,6 +26,8 @@ export function sessionLabel(s: SessionRow): string {
 export function Sidebar({
   collapsed,
   onToggle,
+  mobile,
+  onCloseMobile,
   activeSession,
   sessions,
   loadingSessions,
@@ -38,6 +40,8 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   onToggle: () => void;
+  mobile?: boolean;
+  onCloseMobile?: () => void;
   activeSession: string | null;
   sessions: SessionRow[];
   loadingSessions: boolean;
@@ -61,7 +65,7 @@ export function Sidebar({
   const name = account?.display_name || account?.email || "Cliente";
   const initial = name.slice(0, 1).toUpperCase();
 
-  if (collapsed) {
+  if (collapsed && !mobile) {
     return (
       <aside className="flex h-full w-[64px] shrink-0 flex-col items-center border-r border-stroke bg-background py-4">
         <span className="mb-4 flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Sparkles size={18} /></span>
@@ -75,13 +79,17 @@ export function Sidebar({
   }
 
   return (
-    <aside className="flex h-full w-[268px] shrink-0 flex-col border-r border-stroke bg-background px-3 py-4">
+    <aside className="flex h-full w-[268px] shrink-0 flex-col border-r border-stroke bg-background px-3 py-4 pt-safe max-md:w-[84vw] max-md:max-w-[320px]">
       <div className="mb-4 flex items-center justify-between px-2">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-white"><Sparkles size={16} /></span>
           <span className="text-base font-semibold text-title">Hermes</span>
         </div>
-        <button className="text-text-50 hover:text-title" onClick={onToggle} title="Recolher"><PanelLeft size={18} /></button>
+        {mobile ? (
+          <button className="flex h-10 w-10 items-center justify-center rounded-lg text-text-50 hover:bg-background-100 hover:text-title" onClick={onCloseMobile} title="Fechar"><X size={20} /></button>
+        ) : (
+          <button className="text-text-50 hover:text-title" onClick={onToggle} title="Recolher"><PanelLeft size={18} /></button>
+        )}
       </div>
 
       <button className="side-item" onClick={onNewChat}><PencilLine size={16} /> Nova conversa</button>
