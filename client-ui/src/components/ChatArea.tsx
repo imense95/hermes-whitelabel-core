@@ -1,73 +1,92 @@
 import { useEffect, useRef, useState } from "react";
-import { Search, Image, Newspaper, Play, MoreHorizontal, Share2, Pin, PencilLine, FolderInput, Trash2, Copy, RefreshCw, ThumbsUp, ThumbsDown, Sparkles } from "lucide-react";
-import { api, type ChatMessage } from "../lib/api";
+import { MoreHorizontal, Trash2, Copy, Sparkles, Wrench, Check, Loader2, AlertTriangle, WifiOff } from "lucide-react";
 import { Composer } from "./Composer";
 import { ChoiceCards } from "./ChoiceCards";
+import { useChatSession, type PendingRequest, type UiMessage } from "../lib/useChatSession";
+import { gateway, type ConnState } from "../lib/gateway";
+import { api } from "../lib/api";
 
-const QUICK = [
-  { Icon: Search, label: "Busca profunda" },
-  { Icon: Image, label: "Criar imagens" },
-  { Icon: Newspaper, label: "Últimas notícias" },
-  { Icon: Play, label: "Gerar vídeo" },
-];
+const APPROVAL_LABELS: Record<string, { label: string; description: string }> = {
+  once: { label: "Permitir uma vez", description: "Só esta execução" },
+  session: { label: "Permitir nesta conversa", description: "Até fechar a conversa" },
+  always: { label: "Permitir sempre", description: "Não perguntar mais para este comando" },
+  deny: { label: "Negar", description: "O assistente não executa" },
+};
 
-// Área central de chat. Vazia → hero + composer + pills. Com sessão → cabeçalho
-// (título, menu ..., Share) + mensagens + composer no rodapé.
-export function ChatArea({ sessionId, title }: { sessionId: string | null; title?: string }) {
-  const [msgs, setMsgs] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [showChoice, setShowChoice] = useState(false);
+// Área central de chat, ligada ao gateway WS. Vazia → hero + composer.
+// Com sessão → cabeçalho + mensagens (streaming) + cartões de aprovação/escolha.
+export function ChatArea({
+  sessionId,
+  onSessionCreated,
+  onTitle,
+  onDeleted,
+}: {
+  sessionId: string | null;
+  onSessionCreated: (storedId: string) => void;
+  onTitle?: (storedId: string, title: string) => void;
+  onDeleted?: (storedId: string) => void;
+}) {
+  const chat = useChatSession(sessionId, onSessionCreated, onTitle);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [conn, setConn] = useState<ConnState>(gateway.state);
   const endRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!sessionId) { setMsgs([]); return; }
-    setLoading(true);
-    api.getMessages(sessionId).then((m) => setMsgs(Array.isArray(m) ? m : [])).catch(() => setMsgs([])).finally(() => setLoading(false));
-  }, [sessionId]);
-
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, showChoice]);
-
+  useEffect(() => gateway.onState(setConn), []);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages, chat.requests]);
   useEffect(() => {
     function onDoc(e: MouseEvent) { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  async function send(text: string) {
-    setMsgs((m) => [...m, { role: "user", content: text }]);
-    if (/qual|escolh|opç|variaç/i.test(text)) { setTimeout(() => setShowChoice(true), 250); return; }
-    if (sessionId) {
-      const r = await api.sendChat(sessionId, text).catch(() => null);
-      if (r?.reply) setMsgs((m) => [...m, { role: "assistant", content: r.reply! }]);
-    }
+  const empty = !sessionId && chat.messages.length === 0;
+  const currentModel = (chat.info?.model as string) || undefined;
+
+  async function deleteConversation() {
+    if (!sessionId) return;
+    if (!confirm("Excluir esta conversa? Isso não pode ser desfeito.")) return;
+    setMenuOpen(false);
+    await gateway.call("session.close", { session_id: chat.runtimeId || sessionId }).catch(() => {});
+    await api.deleteSession(sessionId).catch(() => {});
+    onDeleted?.(sessionId);
   }
 
-  const empty = !sessionId && msgs.length === 0;
+  const composer = (
+    <Composer
+      onSend={chat.send}
+      onStop={chat.interrupt}
+      running={chat.running}
+      attachments={chat.attachments}
+      onAddFiles={chat.addFiles}
+      onRemoveAttachment={chat.removeAttachment}
+      currentModel={currentModel}
+    />
+  );
 
   return (
     <section className="relative flex h-full flex-1 flex-col rounded-2xl bg-panel shadow-panel">
+      {conn === "lost" && (
+        <div className="flex items-center gap-2 rounded-t-2xl bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+          <WifiOff size={14} /> Conexão com o assistente perdida.
+          <button className="underline" onClick={() => gateway.connect().catch(() => {})}>Reconectar</button>
+        </div>
+      )}
       {!empty && (
         <div className="flex items-center justify-between border-b border-stroke px-6 py-3">
-          <span className="truncate text-sm font-medium text-title">{title || "Conversa"}</span>
+          <span className="truncate text-sm font-medium text-title">{chat.title || "Nova conversa"}</span>
           <div className="flex items-center gap-2">
+            {chat.running && <span className="flex items-center gap-1 text-xs text-text-50"><Loader2 size={13} className="animate-spin" /> respondendo</span>}
             <div className="relative" ref={menuRef}>
               <button onClick={() => setMenuOpen((v) => !v)} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-100 hover:bg-background-100" title="Mais">
                 <MoreHorizontal size={18} />
               </button>
               {menuOpen && (
                 <div className="absolute right-0 top-10 z-20 w-52 rounded-xl border border-stroke bg-panel p-1 shadow-pop">
-                  <button className="menu-item"><Pin size={16} /> Fixar</button>
-                  <button className="menu-item"><PencilLine size={16} /> Renomear</button>
-                  <button className="menu-item"><FolderInput size={16} /> Mover para projeto</button>
-                  <button className="menu-item text-red-600"><Trash2 size={16} /> Excluir conversa</button>
+                  <button className="menu-item text-red-600" onClick={deleteConversation} disabled={!sessionId}><Trash2 size={16} /> Excluir conversa</button>
                 </div>
               )}
             </div>
-            <button className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover">
-              <Share2 size={15} /> Compartilhar
-            </button>
           </div>
         </div>
       )}
@@ -76,51 +95,111 @@ export function ChatArea({ sessionId, title }: { sessionId: string | null; title
         <div className="flex flex-1 flex-col items-center justify-center px-6">
           <h1 className="text-3xl font-semibold text-primary">Como posso ajudar?</h1>
           <p className="mt-3 max-w-md text-center text-sm text-text-50">
-            Seu assistente Hermes — respostas, conteúdo de marketing e conexão dos seus canais, tudo num só lugar.
+            Seu assistente — respostas, conteúdo e conexão dos seus canais, tudo num só lugar.
           </p>
-          <div className="mt-8 w-full max-w-2xl"><Composer onSend={send} /></div>
-          <div className="mt-5 flex flex-wrap justify-center gap-3">
-            {QUICK.map((q) => (
-              <button key={q.label} className="action-pill"><q.Icon size={16} /> {q.label}</button>
-            ))}
-          </div>
+          <div className="mt-8 w-full max-w-2xl">{composer}</div>
         </div>
       ) : (
         <>
           <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
-            {loading && <p className="text-sm text-text-50">Carregando conversa…</p>}
-            {msgs.map((m, i) => <Bubble key={i} role={m.role} content={m.content} />)}
-            {showChoice && (
-              <div className="max-w-xl">
-                <ChoiceCards
-                  prompt="Qual variação de arte publicar hoje?"
-                  options={[
-                    { id: "v1", label: "Variação 1", description: "Fundo escuro, foco no símbolo" },
-                    { id: "v2", label: "Variação 2", description: "Fundo claro, wordmark completo" },
-                    { id: "later", label: "Depois", description: "Reagendar para amanhã" },
-                  ]}
-                  onChoose={(id) => {
-                    setShowChoice(false);
-                    setMsgs((m) => [...m, { role: "assistant", content: `Perfeito — segui com **${id}**. Publico hoje às 7h.` }]);
-                  }}
-                />
+            {chat.loading && <p className="text-sm text-text-50">Carregando conversa…</p>}
+            {chat.messages.map((m) => <Bubble key={m.key} m={m} />)}
+            {chat.requests.map((r) => (
+              <div key={r.id} className="max-w-2xl">
+                <RequestCard req={r} onApproval={chat.answerApproval} onClarify={chat.answerClarify} />
+              </div>
+            ))}
+            {chat.error && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {chat.error}
               </div>
             )}
             <div ref={endRef} />
           </div>
-          <div className="border-t border-stroke p-4"><Composer onSend={send} /></div>
+          <div className="border-t border-stroke p-4">{composer}</div>
         </>
       )}
     </section>
   );
 }
 
-function Bubble({ role, content }: { role: string; content: string }) {
-  const isUser = role === "user";
-  if (isUser) {
+function RequestCard({ req, onApproval, onClarify }: {
+  req: PendingRequest;
+  onApproval: (r: PendingRequest, choice: string) => void;
+  onClarify: (r: PendingRequest, answer: string, qid?: string) => Promise<void>;
+}) {
+  const p = req.params || {};
+  if (req.method === "approval") {
+    const choices: string[] = Array.isArray(p.choices) && p.choices.length ? p.choices : ["once", "deny"];
+    return (
+      <ChoiceCards
+        tone="warning"
+        prompt={p.description ? `O assistente quer executar: ${p.description}` : "O assistente pede permissão para executar um comando"}
+        detail={p.command || undefined}
+        options={choices.map((c) => ({ id: c, ...(APPROVAL_LABELS[c] || { label: c, description: "" }) }))}
+        onChoose={(id) => onApproval(req, id)}
+      />
+    );
+  }
+  // clarify: pergunta única ou lote
+  if (Array.isArray(p.questions) && p.questions.length) {
+    return (
+      <div className="space-y-3">
+        {p.questions.map((q: any) => (
+          <ClarifyQuestion key={q.qid} question={q.question} choices={q.choices} answered={p.answers?.[q.qid]}
+            onAnswer={(a) => onClarify(req, a, q.qid)} />
+        ))}
+      </div>
+    );
+  }
+  return <ClarifyQuestion question={p.question || "O assistente tem uma pergunta"} choices={p.choices} onAnswer={(a) => onClarify(req, a)} />;
+}
+
+function ClarifyQuestion({ question, choices, answered, onAnswer }: { question: string; choices?: string[] | null; answered?: string; onAnswer: (a: string) => Promise<void> | void }) {
+  const [free, setFree] = useState("");
+  const [done, setDone] = useState<string | null>(answered ?? null);
+  if (done !== null) {
+    return (
+      <div className="rounded-xl border border-stroke bg-background-50 px-4 py-3 text-sm text-text-200">
+        <span className="text-xs text-text-50">{question}</span>
+        <div className="mt-1 flex items-center gap-2 text-title"><Check size={14} className="text-primary" /> {done || "(pulado)"}</div>
+      </div>
+    );
+  }
+  const opts = Array.isArray(choices) && choices.length ? choices : null;
+  return (
+    <div className="space-y-2">
+      {opts ? (
+        <ChoiceCards prompt={question} options={opts.map((c) => ({ id: c, label: c }))} onChoose={async (id) => { await onAnswer(id); setDone(id); }} />
+      ) : (
+        <div className="rounded-xl border border-stroke border-l-4 border-l-primary bg-panel p-4 shadow-panel">
+          <p className="mb-3 text-sm font-medium text-title">{question}</p>
+          <div className="flex gap-2">
+            <input value={free} onChange={(e) => setFree(e.target.value)} onKeyDown={async (e) => { if (e.key === "Enter" && free.trim()) { await onAnswer(free.trim()); setDone(free.trim()); } }}
+              placeholder="Sua resposta…" className="flex-1 rounded-lg border border-stroke bg-background-50 px-3 py-2 text-sm text-title outline-none focus:border-primary" />
+            <button className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={!free.trim()}
+              onClick={async () => { await onAnswer(free.trim()); setDone(free.trim()); }}>Responder</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Bubble({ m }: { m: UiMessage }) {
+  if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] rounded-2xl bg-primary px-4 py-2.5 text-sm leading-relaxed text-white">{content}</div>
+        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-primary px-4 py-2.5 text-sm leading-relaxed text-white">{m.text}</div>
+      </div>
+    );
+  }
+  if (m.role === "tool") {
+    return (
+      <div className="flex items-center gap-2 pl-11 text-xs text-text-50">
+        {m.toolDone ? <Wrench size={13} /> : <Loader2 size={13} className="animate-spin" />}
+        <span className="font-medium">{m.toolName || "ferramenta"}</span>
+        {m.text && <span className="truncate">— {m.text}</span>}
       </div>
     );
   }
@@ -130,13 +209,17 @@ function Bubble({ role, content }: { role: string; content: string }) {
         <Sparkles size={16} />
       </span>
       <div className="min-w-0">
-        <div className="mb-1 text-xs font-medium text-text-50">Hermes</div>
-        <div className="rounded-2xl bg-background-50 px-4 py-2.5 text-sm leading-relaxed text-text-200">{content}</div>
-        <div className="mt-1.5 flex items-center gap-1 text-text-50">
-          {[Copy, RefreshCw, ThumbsUp, ThumbsDown, MoreHorizontal].map((Icon, i) => (
-            <button key={i} className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-background-100 hover:text-text-200"><Icon size={15} /></button>
-          ))}
+        <div className="mb-1 text-xs font-medium text-text-50">Assistente</div>
+        <div className="whitespace-pre-wrap rounded-2xl bg-background-50 px-4 py-2.5 text-sm leading-relaxed text-text-200">
+          {m.text}
+          {m.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-primary/60 align-text-bottom" />}
         </div>
+        {m.error && <div className="mt-1 text-xs text-red-600">{m.error}</div>}
+        {!m.streaming && m.text && (
+          <div className="mt-1.5 flex items-center gap-1 text-text-50">
+            <button onClick={() => navigator.clipboard?.writeText(m.text)} className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-background-100 hover:text-text-200" title="Copiar"><Copy size={15} /></button>
+          </div>
+        )}
       </div>
     </div>
   );

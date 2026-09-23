@@ -1,0 +1,8 @@
+# Evita mandar lixo de dev para o contexto do build (o Dockerfile faz COPY client-ui/ ./)
+client-ui/node_modules
+client-ui/dist
+client-ui/.old
+client-ui/dev/dbg_*.py
+admin-api/.venv
+**/__pycache__
+.git

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Account, type ModelOption } from "../lib/api";
+import { api, modelLabel, type AuthMe, type ModelOptionsResponse, type StatusResponse } from "../lib/api";
 import { TelegramTab } from "../tabs/TelegramTab";
 import { WhatsAppTab } from "../tabs/WhatsAppTab";
 
@@ -12,28 +12,23 @@ const NAV: { id: Section; label: string; icon: string }[] = [
   { id: "whatsapp", label: "WhatsApp", icon: "⬤" },
 ];
 
-// Modal de configurações — espelha o modal "Account" do demo AIChat, com uma
-// barra lateral de seções. Reúne Conta, Modelos (tokens) e os canais.
-export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsModal({ open, onClose, account }: { open: boolean; onClose: () => void; account: AuthMe | null }) {
   const initial = (new URLSearchParams(window.location.search).get("section") as Section) || "account";
-  const [section, setSection] = useState<Section>(
-    NAV.some((n) => n.id === initial) ? initial : "account",
-  );
+  const [section, setSection] = useState<Section>(NAV.some((n) => n.id === initial) ? initial : "account");
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-2xl bg-panel shadow-pop"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-2xl bg-panel shadow-pop" onClick={(e) => e.stopPropagation()}>
         <nav className="w-52 shrink-0 border-r border-stroke bg-background p-3">
           <p className="side-label">Configurações</p>
           {NAV.map((n) => (
-            <button
-              key={n.id}
-              onClick={() => setSection(n.id)}
-              className={["side-item", section === n.id ? "side-item-active" : ""].join(" ")}
-            >
+            <button key={n.id} onClick={() => setSection(n.id)} className={["side-item", section === n.id ? "side-item-active" : ""].join(" ")}>
               <span aria-hidden>{n.icon}</span> {n.label}
             </button>
           ))}
@@ -44,7 +39,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             <button onClick={onClose} className="text-text-50 hover:text-title" title="Fechar">✕</button>
           </header>
           <div className="p-6">
-            {section === "account" && <AccountSection />}
+            {section === "account" && <AccountSection account={account} />}
             {section === "models" && <ModelsSection />}
             {section === "telegram" && <TelegramTab />}
             {section === "whatsapp" && <WhatsAppTab />}
@@ -55,7 +50,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   );
 }
 
-function Row({ title, desc, action }: { title: string; desc?: string; action: React.ReactNode }) {
+function Row({ title, desc, action }: { title: string; desc?: string | null; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between border-b border-stroke py-4 last:border-0">
       <div>
@@ -67,55 +62,71 @@ function Row({ title, desc, action }: { title: string; desc?: string; action: Re
   );
 }
 
-function AccountSection() {
-  const [acc, setAcc] = useState<Account | null>(null);
-  useEffect(() => {
-    api.getAccount().then(setAcc).catch(() => setAcc(null));
-  }, []);
+// Conta = identidade OIDC (Keycloak) lida de /api/auth/me. Nome/e-mail são
+// geridos no IdP pela equipe; aqui só exibição e sair.
+function AccountSection({ account }: { account: AuthMe | null }) {
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  useEffect(() => { api.status().then(setStatus).catch(() => setStatus(null)); }, []);
+  const name = account?.display_name || account?.email || "Cliente";
+  const gated = !!status?.auth_required;
   return (
     <div>
       <div className="flex items-center gap-4 pb-2">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary">
-          {(acc?.name || "U").slice(0, 1).toUpperCase()}
-        </span>
+        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary">{name.slice(0, 1).toUpperCase()}</span>
         <div>
-          <p className="text-base font-semibold text-title">{acc?.name || "Cliente"}</p>
-          <p className="text-sm text-text-50">{acc?.email || "—"}</p>
+          <p className="text-base font-semibold text-title">{name}</p>
+          <p className="text-sm text-text-50">{account?.email || (gated ? "—" : "modo local, sem login")}</p>
         </div>
       </div>
-      <Row title="Nome" desc={acc?.name} action={<button className="btn-outline">Editar</button>} />
-      <Row title="E-mail" desc={acc?.email} action={<button className="btn-outline">Alterar</button>} />
-      <Row title="Plano" desc={acc?.plan || "Ativo"} action={<span className="rounded-full bg-primary-light px-3 py-1 text-xs font-medium text-primary">ativo</span>} />
-      <Row title="Sair" desc="Encerrar a sessão neste dispositivo" action={<button className="btn-outline">Sair</button>} />
+      <Row title="Nome" desc={account?.display_name || "—"} />
+      <Row title="E-mail" desc={account?.email || "—"} />
+      <Row title="Provedor de login" desc={account?.provider || (gated ? "—" : "nenhum (dev)")} />
+      <Row title="Versão do assistente" desc={status?.version ? `Hermes ${status.version}` : "—"} />
+      <Row title="Sair" desc="Encerrar a sessão neste dispositivo"
+        action={<button className="btn-outline" onClick={() => api.logout()} disabled={!gated} title={gated ? "" : "Sem login em modo local"}>Sair</button>} />
     </div>
   );
 }
 
+// Modelos = GET /api/model/options: provedores autenticados + seus modelos.
+// Só visualização nesta fatia. A chave é cadastrada pela equipe (Admin API).
 function ModelsSection() {
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [data, setData] = useState<ModelOptionsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api.listModels()
-      .then((m) => setModels(Array.isArray(m) ? m : []))
-      .catch(() => setModels([]));
+    api.modelOptions().then((r) => setData(r && Array.isArray(r.providers) ? r : { providers: [], model: "", provider: "" }))
+      .catch((e) => setErr(e?.message || "falha ao carregar"));
   }, []);
+  const provs = (data?.providers || []).filter((p) => p.authenticated !== false);
   return (
     <div>
       <p className="mb-4 text-sm text-text-50">
-        Modelos disponíveis nesta instância. A chave de API é cadastrada pela equipe
-        na configuração do servidor — nunca digitada aqui.
+        Modelos disponíveis nesta instância. A chave de API é cadastrada pela equipe na configuração do servidor — nunca digitada aqui.
       </p>
-      <ul className="divide-y divide-stroke rounded-xl border border-stroke">
-        {models.length === 0 && <li className="px-4 py-3 text-sm text-text-50">Nenhum modelo configurado.</li>}
-        {models.map((m) => (
-          <li key={m.id} className="flex items-center justify-between px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-title">{m.label || m.id}</p>
-              {m.provider && <p className="text-xs text-text-50">{m.provider}</p>}
-            </div>
-            <span className="rounded-full bg-primary-light px-3 py-1 text-xs font-medium text-primary">disponível</span>
-          </li>
-        ))}
-      </ul>
+      {data?.model && (
+        <div className="mb-4 rounded-xl border border-primary/30 bg-primary-light px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-primary">Modelo em uso</p>
+          <p className="text-sm font-medium text-title">{modelLabel(data.model)} <span className="text-text-50">· {data.provider}</span></p>
+        </div>
+      )}
+      {err && <p className="text-sm text-red-600">{err}</p>}
+      {!err && !data && <p className="text-sm text-text-50">Carregando…</p>}
+      {data && provs.length === 0 && <p className="rounded-xl border border-stroke px-4 py-3 text-sm text-text-50">Nenhum provedor configurado.</p>}
+      {provs.map((p) => (
+        <div key={p.slug} className="mb-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-text-50">{p.name || p.slug} {p.is_current && <span className="ml-1 rounded-full bg-primary-light px-2 py-0.5 text-[10px] text-primary">atual</span>}</p>
+          <ul className="divide-y divide-stroke rounded-xl border border-stroke">
+            {(p.models || []).length === 0 && <li className="px-4 py-3 text-sm text-text-50">Sem modelos listados.</li>}
+            {(p.models || []).map((m) => (
+              <li key={m} className="flex items-center justify-between px-4 py-2.5">
+                <p className="text-sm text-title">{modelLabel(m)}</p>
+                {m === data?.model && p.is_current ? <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-white">em uso</span>
+                  : <span className="rounded-full bg-background-100 px-3 py-1 text-xs text-text-50">disponível</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }

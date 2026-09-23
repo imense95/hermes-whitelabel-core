@@ -1,24 +1,19 @@
 import { useEffect, useState } from "react";
 import { Search, Clock, X } from "lucide-react";
-import { api, type SessionSummary } from "../lib/api";
+import { api, type SessionRow } from "../lib/api";
+import { groupSessions, sessionLabel } from "./Sidebar";
 
-// Modal de busca global — "Search anything", resultados agrupados por data,
-// ESC fecha (espelha o command-palette do demo AIChat).
-export function SearchModal({
-  open,
-  onClose,
-  onSelect,
-}: {
+// Busca global: sem termo mostra as conversas recentes (lista já carregada);
+// com termo consulta GET /api/sessions/search (FTS5 no conteúdo + id).
+export function SearchModal({ open, onClose, onSelect, recent }: {
   open: boolean;
   onClose: () => void;
   onSelect: (id: string) => void;
+  recent: SessionRow[];
 }) {
   const [q, setQ] = useState("");
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-
-  useEffect(() => {
-    if (open) api.listSessions().then((s) => setSessions(Array.isArray(s) ? s : [])).catch(() => setSessions([]));
-  }, [open]);
+  const [results, setResults] = useState<(SessionRow & { snippet?: string })[] | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
@@ -26,50 +21,53 @@ export function SearchModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) { setQ(""); setResults(null); return; }
+  }, [open]);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setResults(null); return; }
+    let alive = true;
+    setBusy(true);
+    const t = setTimeout(() => {
+      api.searchSessions(term).then((r) => { if (alive) setResults(Array.isArray(r?.results) ? r.results : []); })
+        .catch(() => { if (alive) setResults([]); })
+        .finally(() => { if (alive) setBusy(false); });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+
   if (!open) return null;
 
-  const filtered = sessions.filter((s) => (s.title || "").toLowerCase().includes(q.toLowerCase()));
-  const groups = filtered.reduce<Record<string, SessionSummary[]>>((acc, s) => {
-    const k = (s as any).group || "Recentes";
-    (acc[k] ||= []).push(s);
-    return acc;
-  }, {});
+  const list = results ?? recent;
+  const groups = results ? [["Resultados", results] as [string, SessionRow[]]] : groupSessions(recent);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh]" onClick={onClose}>
       <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-panel shadow-pop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 border-b border-stroke px-5 py-4">
           <Search size={18} className="text-text-50" />
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar em tudo…"
-            className="flex-1 bg-transparent text-sm text-title outline-none placeholder:text-text-50"
-          />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar nas conversas…"
+            className="flex-1 bg-transparent text-sm text-title outline-none placeholder:text-text-50" />
           <button onClick={onClose} className="text-text-50 hover:text-title"><X size={18} /></button>
         </div>
-
         <div className="max-h-[52vh] overflow-y-auto p-3">
-          {Object.entries(groups).map(([label, items]) => (
+          {groups.map(([label, items]) => (
             <div key={label} className="mb-3">
-              <div className="mb-1 flex items-center gap-2 px-2 text-xs font-medium text-text-50">
-                <Clock size={13} /> {label}
-              </div>
+              <div className="mb-1 flex items-center gap-2 px-2 text-xs font-medium text-text-50"><Clock size={13} /> {label}</div>
               {items.map((s) => (
-                <button
-                  key={s.session_id}
-                  onClick={() => { onSelect(s.session_id); onClose(); }}
-                  className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm text-title hover:bg-background-100"
-                >
-                  {s.title || s.session_id}
+                <button key={s.id} onClick={() => { onSelect(s.id); onClose(); }}
+                  className="flex w-full flex-col items-start rounded-lg px-3 py-2.5 text-left text-sm text-title hover:bg-background-100">
+                  <span className="truncate">{sessionLabel(s)}</span>
+                  {(s as any).snippet && <span className="truncate text-xs text-text-50">{(s as any).snippet}</span>}
                 </button>
               ))}
             </div>
           ))}
-          {filtered.length === 0 && <p className="px-3 py-6 text-center text-sm text-text-50">Nenhum resultado.</p>}
+          {!busy && list.length === 0 && <p className="px-3 py-6 text-center text-sm text-text-50">Nenhum resultado.</p>}
+          {busy && <p className="px-3 py-2 text-xs text-text-50">Buscando…</p>}
         </div>
-
         <div className="border-t border-stroke bg-background-50 px-5 py-2.5 text-center text-xs text-text-50">
           Pressione <kbd className="rounded bg-panel px-1.5 py-0.5 shadow-sm">ESC</kbd> para fechar
         </div>
