@@ -32,8 +32,9 @@ def cli(tmp_path: Path, monkeypatch):
     (data / "sessions" / "segredo.jsonl").write_text("conversa privada", encoding="utf-8")
     (data / ".env").write_text("OPENROUTER_API_KEY=chave-antiga\n", encoding="utf-8")
 
-    (catalogo / "urban-metas").mkdir(parents=True)
-    (catalogo / "urban-metas" / "SKILL.md").write_text(
+    # catalogo aninhado por ciclo de vida (universal/ e clientes/<slug>/)
+    (catalogo / "universal" / "urban-metas").mkdir(parents=True)
+    (catalogo / "universal" / "urban-metas" / "SKILL.md").write_text(
         "---\nname: urban-metas\nversion: 1.2.0\n---\ncorpo\n", encoding="utf-8")
 
     monkeypatch.setenv("HERMES_DATA_DIR", str(data))
@@ -172,6 +173,41 @@ def test_nao_existe_upload_de_skill(cli):
     # o campo extra e' ignorado; a origem continua sendo o catalogo da imagem
     assert r.status_code == 200
     assert r.json()["versao"] == "1.2.0"
+
+
+def test_instala_skill_especifica_de_cliente(cli):
+    """Skill sob medida vive em clientes/<slug>/especificas/ e resolve por nome."""
+    c, data, catalogo, _ = cli
+    esp = catalogo / "clientes" / "urban" / "especificas" / "urban-corridas"
+    esp.mkdir(parents=True)
+    (esp / "SKILL.md").write_text(
+        "---\nname: urban-corridas\nversion: 0.1.0\n---\ncorpo\n", encoding="utf-8")
+    r = c.post("/v1/skills/install", json={"skill": "urban-corridas"}, headers=h())
+    assert r.status_code == 200
+    assert r.json()["versao"] == "0.1.0"
+    assert (data / "skills" / "urban-corridas" / "SKILL.md").is_file()
+
+
+def test_overlay_nao_e_instalavel_inteiro(cli):
+    """overlays/ guardam so DELTA — nao sao skill instalavel por nome."""
+    c, _, catalogo, _ = cli
+    ov = catalogo / "clientes" / "urban" / "overlays" / "so-delta"
+    ov.mkdir(parents=True)
+    (ov / "SKILL.md").write_text(
+        "---\nname: so-delta\nversion: 0.1.0\n---\ndelta\n", encoding="utf-8")
+    r = c.post("/v1/skills/install", json={"skill": "so-delta"}, headers=h())
+    assert r.status_code == 404
+
+
+def test_skill_ambigua_no_catalogo_da_409(cli):
+    """Mesmo nome em universal/ e especificas/ e' erro explicito, nao palpite."""
+    c, _, catalogo, _ = cli
+    dup = catalogo / "clientes" / "urban" / "especificas" / "urban-metas"
+    dup.mkdir(parents=True)
+    (dup / "SKILL.md").write_text(
+        "---\nname: urban-metas\nversion: 9.9.9\n---\noutra\n", encoding="utf-8")
+    r = c.post("/v1/skills/install", json={"skill": "urban-metas"}, headers=h())
+    assert r.status_code == 409
 
 
 # --- verbo: logs ----------------------------------------------------------

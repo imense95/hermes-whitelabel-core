@@ -231,6 +231,41 @@ def _ler_versao(skill_dir: Path) -> str | None:
     return None
 
 
+def _resolver_skill_no_catalogo(nome: str) -> Path | None:
+    """Acha o diretorio de uma skill por NOME na arvore do catalogo.
+
+    O catalogo passou a ser aninhado por ciclo de vida:
+        universal/<nome>/SKILL.md
+        clientes/<slug>/especificas/<nome>/SKILL.md
+        clientes/<slug>/overlays/<nome>/        (delta; fatia futura de merge)
+    Resolvemos pelo mesmo criterio da listagem (rglob de SKILL.md), casando o
+    diretorio-folha com o nome pedido. Confinamento: o caminho resolvido tem
+    que ficar sob CATALOG_DIR. Ambiguidade (mesmo nome em >1 lugar) e' erro
+    explicito — a precedencia por cliente/overlay e' fatia posterior, nao um
+    palpite silencioso aqui.
+    """
+    base = CATALOG_DIR.resolve()
+    if not base.is_dir():
+        return None
+    achados = []
+    for md in base.rglob("SKILL.md"):
+        d = md.parent
+        # overlays nao sao skills instalaveis inteiras: guardam so delta
+        if d.name == nome and "overlays" not in d.relative_to(base).parts:
+            r = d.resolve()
+            if str(r).startswith(str(base) + os.sep):
+                achados.append(r)
+    achados = sorted(set(achados))
+    if len(achados) > 1:
+        raise HTTPException(
+            409,
+            f"skill '{nome}' aparece em mais de um lugar no catalogo: "
+            + ", ".join(str(a.relative_to(base)) for a in achados)
+            + " — resolucao por cliente ainda nao implementada",
+        )
+    return achados[0] if achados else None
+
+
 @app.get("/v1/skills")
 def listar_skills(op: Operador = Depends(autenticar)) -> dict[str, Any]:
     instaladas = []
@@ -275,14 +310,11 @@ def instalar_skill(body: InstalarSkill, op: Operador = Depends(autenticar)) -> d
     enviada por HTTP e' execucao de codigo arbitrario no agente do cliente
     com outro nome.
     """
-    origem = (CATALOG_DIR / body.skill).resolve()
-    # dupla checagem: regex no nome + confinamento do caminho resolvido
+    origem = _resolver_skill_no_catalogo(body.skill)
+    # dupla checagem: regex no nome (no schema) + confinamento feito no resolver.
     # Tentativa recusada nao muda estado: registra, mas nao bloqueia a
     # resposta se a trilha estiver indisponivel.
-    if not str(origem).startswith(str(CATALOG_DIR.resolve()) + os.sep):
-        auditar(op.nome, "skills.install", body.skill, "erro", "fora do catalogo", obrigatorio=False)
-        raise HTTPException(400, "skill fora do catalogo")
-    if not (origem / "SKILL.md").is_file():
+    if origem is None:
         auditar(op.nome, "skills.install", body.skill, "erro", "nao existe no catalogo", obrigatorio=False)
         raise HTTPException(404, f"skill '{body.skill}' nao esta no catalogo do produto")
 
