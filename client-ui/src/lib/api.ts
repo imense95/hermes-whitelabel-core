@@ -104,29 +104,65 @@ export interface ImageUploadResponse {
   mime_type: string;
 }
 
-// --- Onboarding de canais (fatia 2; formas já alinhadas ao upstream) --------
+// --- Onboarding de canais — formas REAIS (web_routers/messaging.py, v2026.9.21) --
+export type WaMode = "self-chat" | "bot";
 export interface WaOnboardingStart {
   pairing_id: string;
-  status?: "starting" | "awaiting_qr" | "qr" | "connected" | "expired";
+  status?: "starting" | "awaiting_qr" | "qr" | "connected" | "expired" | "error" | "cancelled";
   account_phone?: string | null;
+  mode?: string;
 }
 export interface WaOnboardingStatus {
   pairing_id: string;
-  status: "starting" | "awaiting_qr" | "qr" | "connected" | "expired";
+  status: "starting" | "awaiting_qr" | "qr" | "connected" | "expired" | "error" | "cancelled";
   qr_payload?: string | null;
   account_phone?: string | null;
   account_name?: string | null;
   error?: string | null;
+  mode?: string;
 }
 export interface TgOnboardingStart {
   pairing_id: string;
   deep_link: string;
   qr_payload: string;
   suggested_username?: string;
+  expires_at?: string;
 }
+/** GET .../telegram/onboarding/{id}: "waiting" enquanto o usuário não autoriza; "ready" com bot_username. */
 export interface TgOnboardingStatus {
-  status: string;
-  username?: string;
+  status: "waiting" | "ready";
+  bot_username?: string | null;
+  owner_user_id?: string | null;
+  expires_at?: string;
+}
+/** Resposta comum dos /apply: o backend tenta reiniciar o gateway e diz se conseguiu. */
+export interface ApplyResult {
+  ok: boolean;
+  platform?: string;
+  needs_restart?: boolean;
+  restart_started?: boolean;
+  restart_error?: string;
+  bot_username?: string | null;
+}
+/** GET /api/messaging/platforms -> {platforms:[...]} (estado REAL por canal; fonte de verdade das abas). */
+export type PlatformState = "connected" | "pending_restart" | "not_configured" | "disabled" | "gateway_stopped" | "startup_failed" | "error" | "connecting" | "retrying" | string;
+export interface PlatformInfo {
+  id: string;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  gateway_running: boolean;
+  state: PlatformState;
+  error_code?: string | null;
+  error_message?: string | null;
+  updated_at?: string | null;
+  env_vars?: { key: string; required: boolean; is_set: boolean }[];
+  whatsapp_setup?: { mode: "" | "bot" | "self-chat"; allowed_users_set: boolean; home_channel_set: boolean };
+}
+export interface PlatformsResponse {
+  env_path: string;
+  gateway_start_command: string;
+  platforms: PlatformInfo[];
 }
 
 // --- Núcleo HTTP ------------------------------------------------------------
@@ -226,16 +262,24 @@ export const api = {
     }),
 
   // --- Canais / mensageria (/api/messaging/*) ---
-  messagingPlatforms: () => req<any>("/api/messaging/platforms"),
-  waStart: () => req<WaOnboardingStart>("/api/messaging/whatsapp/onboarding/start", { method: "POST", body: "{}" }),
+  messagingPlatforms: () => req<PlatformsResponse>("/api/messaging/platforms"),
+  /** Desligar um canal: PUT {enabled:false}. Para o WhatsApp também limpa a sessão via cancel do onboarding ativo (se houver). */
+  platformSetEnabled: (platformId: string, enabled: boolean) =>
+    req<PlatformInfo>(`/api/messaging/platforms/${encodeURIComponent(platformId)}`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+  waStart: (mode: WaMode) =>
+    req<WaOnboardingStart>("/api/messaging/whatsapp/onboarding/start", { method: "POST", body: JSON.stringify({ mode }) }),
   waStatus: (pairingId: string) => req<WaOnboardingStatus>(`/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}`),
-  waApply: (pairingId: string) =>
-    req<{ ok: boolean; needs_restart?: boolean }>(`/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}/apply`, { method: "POST", body: "{}" }),
+  /** mode "self-chat": só o próprio número (allowed_users vazio -> backend usa o número pareado). */
+  waApply: (pairingId: string, mode: WaMode) =>
+    req<ApplyResult>(`/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}/apply`, { method: "POST", body: JSON.stringify({ mode }) }),
+  waCancel: (pairingId: string) => req<{ ok: boolean }>(`/api/messaging/whatsapp/onboarding/${encodeURIComponent(pairingId)}`, { method: "DELETE" }),
   tgStart: (botName?: string) =>
     req<TgOnboardingStart>("/api/messaging/telegram/onboarding/start", { method: "POST", body: JSON.stringify({ bot_name: botName || "Hermes Agent" }) }),
   tgStatus: (pairingId: string) => req<TgOnboardingStatus>(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}`),
-  tgApply: (pairingId: string) =>
-    req<{ ok: boolean; needs_restart?: boolean }>(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}/apply`, { method: "POST", body: "{}" }),
+  /** O backend EXIGE allowed_user_ids (ids numéricos do Telegram): sem isso é 400. É a allowlist do Plano A. */
+  tgApply: (pairingId: string, allowedUserIds: string[]) =>
+    req<ApplyResult>(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}/apply`, { method: "POST", body: JSON.stringify({ allowed_user_ids: allowedUserIds }) }),
+  tgCancel: (pairingId: string) => req<{ ok: boolean }>(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}`, { method: "DELETE" }),
 };
 
 // --- Helpers de exibição ----------------------------------------------------

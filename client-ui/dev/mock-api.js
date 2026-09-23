@@ -99,8 +99,11 @@ var MODEL_OPTIONS = {
     provider: "anthropic",
 };
 var ME = { user_id: "kc-1234", email: "herbert@urban.example", display_name: "Herbert (Urban)", org_id: null, provider: "self-hosted", expires_at: now + 900 };
-var wa = { polls: 0, connected: false };
+var wa = { polls: 0, connected: false, mode: "self-chat" };
 var tg = { polls: 0, connected: false };
+// Estado persistente dos canais (o que GET /api/messaging/platforms devolve).
+var waP = { enabled: false, configured: false, state: "disabled", restartAt: 0, mode: "" };
+var tgP = { enabled: false, configured: false, state: "disabled", restartAt: 0 };
 var SAMPLE_QR = "2@mockWhatsAppPairingPayload/ExemploParaDesenvolvimentoVisual==,AbCdEf123==,XyZ==";
 function send(res, body, status) {
     if (status === void 0) { status = 200; }
@@ -360,7 +363,7 @@ export function mockApi() {
             });
             // ---------- REST ----------
             server.middlewares.use(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-                var url, qs, excl_1, rows, limit, offset, q_1, results, mm, sid_1, messages, dm, sid_2, i, b, name_1, wm, tm;
+                var url, qs, excl_1, rows, limit, offset, q_1, results, mm, sid_1, messages, dm, sid_2, i, b, name_1, platRow, pm, b, st, b, wm, b, tm, b, ids;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
                         case 0:
@@ -424,43 +427,103 @@ export function mockApi() {
                             name_1 = "dashboard_".concat(Date.now(), "_").concat(b.filename || "pasted-image.png");
                             return [2 /*return*/, send(res, { ok: true, path: "/opt/data/images/" + name_1, name: name_1, bytes: Math.floor(String(b.data_url).length * 0.75), mime_type: "image/png" })];
                         case 2:
-                            // --- Mensageria (formas já alinhadas ao upstream) ---
+                            platRow = function (id, name, st) {
+                                // Simula o reinício: por 6 s após o apply, o gateway "some" e o canal fica pending_restart.
+                                var restarting = st.restartAt && Date.now() - st.restartAt < 6000;
+                                var state = !st.enabled ? "disabled" : !st.configured ? "not_configured" : restarting ? "pending_restart" : st.state;
+                                var row = { id: id, name: name, description: "", docs_url: "", enabled: st.enabled, configured: st.configured, gateway_running: !restarting, state: state, error_code: null, error_message: null, updated_at: null, home_channel: null, env_vars: [], ingress_url: null };
+                                if (id === "whatsapp")
+                                    row.whatsapp_setup = { mode: st.mode || "", allowed_users_set: st.mode === "self-chat", home_channel_set: false };
+                                return row;
+                            };
                             if (url === "/api/messaging/platforms")
-                                return [2 /*return*/, send(res, { whatsapp: { enabled: wa.connected, connected: wa.connected }, telegram: { enabled: tg.connected, connected: tg.connected } })];
-                            if (url === "/api/messaging/whatsapp/onboarding/start" && req.method === "POST") {
-                                wa.polls = 0;
-                                wa.connected = false;
-                                return [2 /*return*/, send(res, { pairing_id: "wa_mock_1" })];
+                                return [2 /*return*/, send(res, { env_path: "/opt/data/.env", gateway_start_command: "hermes gateway start", platforms: [platRow("telegram", "Telegram", tgP), platRow("whatsapp", "WhatsApp", waP)] })];
+                            pm = url.match(/^\/api\/messaging\/platforms\/([^/]+)$/);
+                            if (!(pm && req.method === "PUT")) return [3 /*break*/, 4];
+                            return [4 /*yield*/, readBody(req)];
+                        case 3:
+                            b = _a.sent();
+                            st = pm[1] === "whatsapp" ? waP : tgP;
+                            if (typeof b.enabled === "boolean")
+                                st.enabled = b.enabled;
+                            if (!st.enabled) {
+                                st.state = "disabled";
                             }
+                            return [2 /*return*/, send(res, platRow(pm[1], pm[1], st))];
+                        case 4:
+                            if (!(url === "/api/messaging/whatsapp/onboarding/start" && req.method === "POST")) return [3 /*break*/, 6];
+                            return [4 /*yield*/, readBody(req)];
+                        case 5:
+                            b = _a.sent();
+                            wa.polls = 0;
+                            wa.connected = false;
+                            wa.mode = b.mode === "self-chat" ? "self-chat" : "bot";
+                            return [2 /*return*/, send(res, { pairing_id: "wa_mock_1", status: "starting", mode: wa.mode })];
+                        case 6:
                             wm = url.match(/^\/api\/messaging\/whatsapp\/onboarding\/([^/]+)$/);
+                            if (wm && req.method === "DELETE") {
+                                wa.connected = false;
+                                return [2 /*return*/, send(res, { ok: true })];
+                            }
                             if (wm) {
                                 wa.polls += 1;
                                 if (wa.polls >= 3) {
                                     wa.connected = true;
-                                    return [2 /*return*/, send(res, { pairing_id: wm[1], status: "connected", account_phone: "+55 65 99999-0000" })];
+                                    return [2 /*return*/, send(res, { pairing_id: wm[1], status: "connected", account_phone: "+55 65 99999-0000", mode: wa.mode })];
                                 }
-                                return [2 /*return*/, send(res, { pairing_id: wm[1], status: "awaiting_qr", qr_payload: SAMPLE_QR })];
+                                return [2 /*return*/, send(res, { pairing_id: wm[1], status: "awaiting_qr", qr_payload: SAMPLE_QR, mode: wa.mode })];
                             }
-                            if (/^\/api\/messaging\/whatsapp\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST")
-                                return [2 /*return*/, send(res, { ok: true, needs_restart: false })];
+                            if (!(/^\/api\/messaging\/whatsapp\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST")) return [3 /*break*/, 8];
+                            if (!wa.connected)
+                                return [2 /*return*/, send(res, { detail: "WhatsApp setup is not connected yet." }, 409)];
+                            return [4 /*yield*/, readBody(req)];
+                        case 7:
+                            b = _a.sent();
+                            waP.enabled = true;
+                            waP.configured = true;
+                            waP.state = "connected";
+                            waP.mode = b.mode || wa.mode;
+                            waP.restartAt = Date.now();
+                            return [2 /*return*/, send(res, { ok: true, platform: "whatsapp", needs_restart: false, restart_started: true, restart_action: "gateway-restart", restart_pid: 4242 })];
+                        case 8:
+                            // Telegram
                             if (url === "/api/messaging/telegram/onboarding/start" && req.method === "POST") {
                                 tg.polls = 0;
                                 tg.connected = false;
-                                return [2 /*return*/, send(res, { pairing_id: "tg_mock_1", deep_link: "https://t.me/BotFather?start=mock", qr_payload: "https://t.me/BotFather?start=mock", suggested_username: "urban_bot" })];
+                                return [2 /*return*/, send(res, { pairing_id: "tg_mock_1", deep_link: "https://t.me/BotFather?start=mock", qr_payload: "https://t.me/BotFather?start=mock", suggested_username: "urban_bot", expires_at: new Date(Date.now() + 600000).toISOString() })];
                             }
                             tm = url.match(/^\/api\/messaging\/telegram\/onboarding\/([^/]+)$/);
+                            if (tm && req.method === "DELETE") {
+                                tg.connected = false;
+                                return [2 /*return*/, send(res, { ok: true })];
+                            }
                             if (tm) {
                                 tg.polls += 1;
                                 if (tg.polls >= 3) {
                                     tg.connected = true;
-                                    return [2 /*return*/, send(res, { status: "connected", username: "@urban_bot" })];
+                                    return [2 /*return*/, send(res, { status: "ready", bot_username: "urban_bot", owner_user_id: "123456789", expires_at: null })];
                                 }
-                                return [2 /*return*/, send(res, { status: "pending" })];
+                                return [2 /*return*/, send(res, { status: "waiting", expires_at: new Date(Date.now() + 600000).toISOString() })];
                             }
-                            if (/^\/api\/messaging\/telegram\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST")
-                                return [2 /*return*/, send(res, { ok: true, needs_restart: false })];
-                            // Igual ao real: rota /api desconhecida NÃO vira HTML da SPA.
-                            return [2 /*return*/, send(res, { detail: "Not Found", url: url }, 404)];
+                            if (!(/^\/api\/messaging\/telegram\/onboarding\/[^/]+\/apply$/.test(url) && req.method === "POST")) return [3 /*break*/, 10];
+                            return [4 /*yield*/, readBody(req)];
+                        case 9:
+                            b = _a.sent();
+                            ids = Array.isArray(b.allowed_user_ids) ? b.allowed_user_ids : [];
+                            if (!ids.length)
+                                return [2 /*return*/, send(res, { detail: "Add at least one allowed Telegram user ID." }, 400)];
+                            if (!ids.every(function (s) { return /^\d+$/.test(String(s)); }))
+                                return [2 /*return*/, send(res, { detail: "Allowed Telegram user IDs must be numeric." }, 400)];
+                            if (!tg.connected)
+                                return [2 /*return*/, send(res, { detail: "Telegram setup is not ready yet." }, 409)];
+                            tgP.enabled = true;
+                            tgP.configured = true;
+                            tgP.state = "connected";
+                            tgP.restartAt = Date.now();
+                            return [2 /*return*/, send(res, { ok: true, platform: "telegram", bot_username: "urban_bot", needs_restart: false, restart_started: true, restart_action: "gateway-restart", restart_pid: 4243 })];
+                        case 10: 
+                        // Igual ao real: rota /api desconhecida NÃO vira HTML da SPA.
+                        return [2 /*return*/, send(res, { detail: "Not Found", url: url }, 404)];
                     }
                 });
             }); });
