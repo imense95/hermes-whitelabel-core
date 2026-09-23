@@ -105,50 +105,56 @@ export function Composer({
           const files = Array.from(e.clipboardData?.files || []);
           if (files.length) { e.preventDefault(); onAddFiles(files); }
         }}
-        className="max-h-52 w-full resize-none bg-transparent px-3 py-3 text-sm text-title outline-none placeholder:text-text-50"
+        className="max-h-52 w-full resize-none bg-transparent px-3 py-3 text-base text-title outline-none placeholder:text-text-50 sm:text-sm"
       />
 
-      <div className="flex items-center justify-between px-1 pb-1">
-        <div className="flex items-center gap-1">
+      <div className="flex items-center justify-between gap-2 px-1 pb-1">
+        <div className="flex shrink-0 items-center gap-1">
           <input ref={fileRef} type="file" multiple className="hidden" accept="image/*,video/*,audio/*,.pdf,.txt,.md,.csv,.json,.docx,.xlsx,.pptx,.zip"
             onChange={(e) => { if (e.target.files?.length) onAddFiles(e.target.files); e.currentTarget.value = ""; }} />
-          <button onClick={() => fileRef.current?.click()} className="flex h-9 items-center gap-2 rounded-lg px-3 text-sm text-text-100 hover:bg-background-100" title="Anexar arquivo, foto ou vídeo">
-            <Paperclip size={17} /> Anexar
+          <button onClick={() => fileRef.current?.click()} className="flex h-11 items-center gap-2 rounded-lg px-3 text-sm text-text-100 hover:bg-background-100" title="Anexar arquivo, foto ou vídeo">
+            <Paperclip size={18} /> <span className="hidden sm:inline">Anexar</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative" ref={pickRef}>
-            <button onClick={() => setPickOpen((v) => !v)} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-text-200 hover:bg-background-100" title="Modelo em uso nesta instância">
-              <Sparkles size={15} className="text-claude" />
-              <span className="max-w-[180px] truncate">{shown ? modelLabel(shown) : "Modelo"}</span>
-              <ChevronDown size={15} className="text-text-50" />
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="relative min-w-0" ref={pickRef}>
+            <button onClick={() => setPickOpen((v) => !v)} className="flex min-h-[44px] min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-200 hover:bg-background-100 sm:min-h-0" title="Modelo em uso nesta instância">
+              <Sparkles size={15} className="shrink-0 text-claude" />
+              <span className="max-w-[42vw] truncate sm:max-w-[180px]">{shown ? modelLabel(shown) : "Modelo"}</span>
+              <ChevronDown size={15} className="shrink-0 text-text-50" />
             </button>
             {pickOpen && (
-              <div className="absolute bottom-11 right-0 z-10 max-h-72 w-72 overflow-y-auto rounded-xl border border-stroke bg-panel p-1 shadow-pop">
-                <p className="px-3 py-2 text-xs text-text-50">Modelo definido pela equipe. Esta lista é só consulta.</p>
-                {models.length === 0 && <p className="px-3 py-2 text-sm text-text-50">Nenhum modelo configurado.</p>}
-                {models.map((m) => (
-                  <div key={`${m.provider}/${m.id}`} className={["flex items-center gap-2 rounded-lg px-3 py-2 text-sm", m.id === shown ? "bg-background-100 text-title" : "text-text-200"].join(" ")}>
-                    <Sparkles size={14} className="shrink-0 text-claude" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{modelLabel(m.id)}</span>
-                      <span className="block truncate text-xs text-text-50">{m.provider}</span>
-                    </span>
-                    {m.id === shown && <Check size={15} className="text-primary" />}
-                  </div>
-                ))}
-              </div>
+              <>
+                {/* Backdrop só no mobile, pra fechar tocando fora do bottom-sheet. */}
+                <div className="fixed inset-0 z-10 bg-black/40 sm:hidden" onClick={() => setPickOpen(false)} aria-hidden />
+                <div className="fixed inset-x-0 bottom-0 z-20 max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-stroke bg-panel p-1 pb-safe-3 shadow-pop
+                                sm:absolute sm:inset-x-auto sm:bottom-11 sm:right-0 sm:max-h-72 sm:w-72 sm:rounded-xl sm:border sm:pb-1">
+                  <div className="mx-auto mb-1 mt-1.5 h-1 w-10 rounded-full bg-stroke sm:hidden" aria-hidden />
+                  <p className="px-3 py-2 text-xs text-text-50">Modelo definido pela equipe. Esta lista é só consulta.</p>
+                  {models.length === 0 && <p className="px-3 py-2 text-sm text-text-50">Nenhum modelo configurado.</p>}
+                  {models.map((m) => (
+                    <div key={`${m.provider}/${m.id}`} className={["flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm", m.id === shown ? "bg-background-100 text-title" : "text-text-200"].join(" ")}>
+                      <Sparkles size={14} className="shrink-0 text-claude" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{modelLabel(m.id)}</span>
+                        <span className="block truncate text-xs text-text-50">{m.provider}</span>
+                      </span>
+                      {m.id === shown && <Check size={15} className="shrink-0 text-primary" />}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
           {running ? (
-            <button onClick={onStop} className="flex h-9 w-9 items-center justify-center rounded-full bg-background-100 text-title transition hover:bg-red-100 hover:text-red-600" title="Parar">
-              <Square size={15} />
+            <button onClick={onStop} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background-100 text-title transition hover:bg-red-100 hover:text-red-600" title="Parar">
+              <Square size={16} />
             </button>
           ) : (
-            <button onClick={submit} disabled={!canSend} className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white transition hover:bg-primary-hover disabled:bg-background-100 disabled:text-text-50" title="Enviar">
-              <ArrowUp size={17} />
+            <button onClick={submit} disabled={!canSend} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-white transition hover:bg-primary-hover disabled:bg-background-100 disabled:text-text-50" title="Enviar">
+              <ArrowUp size={18} />
             </button>
           )}
         </div>

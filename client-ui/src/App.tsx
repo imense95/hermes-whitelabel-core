@@ -19,6 +19,7 @@ export default function App() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [account, setAccount] = useState<AuthMe | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(params.get("settings") === "1");
   const [searchOpen, setSearchOpen] = useState(params.get("search") === "1");
 
@@ -61,22 +62,42 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background sm:p-2">
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((v) => !v)}
-        activeSession={session}
-        sessions={sessions}
-        loadingSessions={loadingSessions}
-        onRefresh={refreshSessions}
-        onSelectSession={setSession}
-        onNewChat={() => setSession(null)}
-        onOpenSearch={() => setSearchOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        account={account}
-      />
-      <main className="flex flex-1 flex-col p-2">
-        <ChatArea sessionId={session} onSessionCreated={onSessionCreated} onTitle={onTitle} onDeleted={onDeleted} />
+    <div className="flex h-screen [height:100dvh] bg-background sm:p-2">
+      {/* Backdrop do drawer — só no mobile, quando aberto. */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden
+        />
+      )}
+      {/* Sidebar: em md+ é filho do flex (fixa, no fluxo); abaixo de md vira
+          drawer off-canvas deslizante sobre a área segura esquerda. */}
+      <div
+        className={[
+          "z-40 transition-transform duration-200 ease-out",
+          "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:pl-safe md:translate-x-0",
+          mobileNavOpen ? "translate-x-0 max-md:shadow-pop" : "-translate-x-full",
+        ].join(" ")}
+      >
+        <Sidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+          mobile={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
+          activeSession={session}
+          sessions={sessions}
+          loadingSessions={loadingSessions}
+          onRefresh={refreshSessions}
+          onSelectSession={(id) => { setSession(id); setMobileNavOpen(false); }}
+          onNewChat={() => { setSession(null); setMobileNavOpen(false); }}
+          onOpenSearch={() => { setSearchOpen(true); setMobileNavOpen(false); }}
+          onOpenSettings={() => { setSettingsOpen(true); setMobileNavOpen(false); }}
+          account={account}
+        />
+      </div>
+      <main className="flex min-w-0 flex-1 flex-col p-2">
+        <ChatArea sessionId={session} onOpenNav={() => setMobileNavOpen(true)} onSessionCreated={onSessionCreated} onTitle={onTitle} onDeleted={onDeleted} />
       </main>
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} account={account} />
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} onSelect={setSession} recent={sessions} />

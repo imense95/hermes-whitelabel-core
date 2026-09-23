@@ -23,22 +23,24 @@ export function SettingsModal({ open, onClose, account }: { open: boolean; onClo
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="flex h-[560px] w-full max-w-3xl overflow-hidden rounded-2xl bg-panel shadow-pop" onClick={(e) => e.stopPropagation()}>
-        <nav className="w-52 shrink-0 border-r border-stroke bg-background p-3">
-          <p className="side-label">Configurações</p>
+    <div className="fixed inset-0 z-40 flex items-stretch justify-center bg-black/40 md:items-center md:p-4" onClick={onClose}>
+      <div className="flex h-[100dvh] w-full min-w-0 flex-col overflow-hidden bg-panel md:h-[560px] md:max-w-3xl md:flex-row md:rounded-2xl md:shadow-pop" onClick={(e) => e.stopPropagation()}>
+        <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-stroke bg-background p-2 pt-safe md:w-52 md:flex-col md:gap-0 md:border-b-0 md:border-r md:p-3 md:pt-3">
+          <p className="side-label hidden md:block">Configurações</p>
           {NAV.map((n) => (
-            <button key={n.id} onClick={() => setSection(n.id)} className={["side-item", section === n.id ? "side-item-active" : ""].join(" ")}>
+            <button key={n.id} onClick={() => setSection(n.id)}
+              className={["flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition hover:bg-background-100 md:w-full",
+                section === n.id ? "bg-background-100 font-medium text-title" : "text-text-100"].join(" ")}>
               <span aria-hidden>{n.icon}</span> {n.label}
             </button>
           ))}
         </nav>
-        <div className="flex-1 overflow-y-auto">
-          <header className="flex items-center justify-between border-b border-stroke px-6 py-4">
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-safe">
+          <header className="flex items-center justify-between border-b border-stroke px-4 py-4 md:px-6">
             <h2 className="text-lg font-semibold text-title">{NAV.find((n) => n.id === section)?.label}</h2>
-            <button onClick={onClose} className="text-text-50 hover:text-title" title="Fechar">✕</button>
+            <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-lg text-text-50 hover:bg-background-100 hover:text-title" title="Fechar">✕</button>
           </header>
-          <div className="p-6">
+          <div className="p-4 md:p-6">
             {section === "account" && <AccountSection account={account} />}
             {section === "models" && <ModelsSection />}
             {section === "telegram" && <TelegramTab />}
@@ -52,12 +54,12 @@ export function SettingsModal({ open, onClose, account }: { open: boolean; onClo
 
 function Row({ title, desc, action }: { title: string; desc?: string | null; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between border-b border-stroke py-4 last:border-0">
-      <div>
+    <div className="flex items-center justify-between gap-3 border-b border-stroke py-4 last:border-0">
+      <div className="min-w-0">
         <p className="text-sm font-medium text-title">{title}</p>
-        {desc && <p className="mt-0.5 text-xs text-text-50">{desc}</p>}
+        {desc && <p className="mt-0.5 break-words text-xs text-text-50">{desc}</p>}
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
@@ -72,10 +74,10 @@ function AccountSection({ account }: { account: AuthMe | null }) {
   return (
     <div>
       <div className="flex items-center gap-4 pb-2">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary">{name.slice(0, 1).toUpperCase()}</span>
-        <div>
-          <p className="text-base font-semibold text-title">{name}</p>
-          <p className="text-sm text-text-50">{account?.email || (gated ? "—" : "modo local, sem login")}</p>
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary">{name.slice(0, 1).toUpperCase()}</span>
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold text-title">{name}</p>
+          <p className="truncate text-sm text-text-50">{account?.email || (gated ? "—" : "modo local, sem login")}</p>
         </div>
       </div>
       <Row title="Nome" desc={account?.display_name || "—"} />

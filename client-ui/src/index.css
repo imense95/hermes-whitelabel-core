@@ -45,6 +45,29 @@
   body {
     @apply bg-background text-text-100 font-sans antialiased;
   }
+
+  /* Mobile: trava rolagem elástica do body (só as áreas internas rolam) e
+     evita que o iOS Safari aumente a fonte de inputs (<16px) ao focar. */
+  html, body, #root { height: 100%; }
+  @media (max-width: 767px) {
+    body { overscroll-behavior-y: none; }
+    /* Trava de fundação: nenhum vazamento horizontal no mobile (composer/
+       conteúdo largo não deve criar scroll-x nem esticar overlays fixed). */
+    html, body { overflow-x: hidden; }
+  }
+}
+
+@layer utilities {
+  /* Área segura: notch no topo, barra de gestos/home indicator no rodapé.
+     Só têm efeito com viewport-fit=cover no index.html; em telas sem notch
+     env() resolve para 0, então é seguro em desktop também. */
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .pl-safe { padding-left: env(safe-area-inset-left, 0px); }
+  .pr-safe { padding-right: env(safe-area-inset-right, 0px); }
+  /* Combina o padding próprio do elemento com a área segura do rodapé. */
+  .pb-safe-3 { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)); }
+  .pb-safe-4 { padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); }
 }
 
 @layer components {
