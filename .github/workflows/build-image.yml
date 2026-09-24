@@ -141,28 +141,23 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
-      - name: pre-requisitos (schema + role que os init assumem)
+      # A linhagem de PRODUCAO e' 02 -> 03 -> 04 -> 05 (banco 'plataforma').
+      # 00/01 sao dev (referenciam DATABASE app) e nao entram — o 03 documenta
+      # isso no proprio cabecalho. 02 cria o schema platform + tenants + urban;
+      # 03 a auditoria; 04 as tabelas de skills + a role platform_panel; 05 as
+      # de release. Aplicar 04/05 isolados falha (dependem de platform.tenants).
+      - name: aplicar a linhagem de producao de verdade (02 -> 03 -> 04 -> 05)
         run: |
-          psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE SCHEMA IF NOT EXISTS platform;
-          DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='platform_panel') THEN
-              CREATE ROLE platform_panel;
-            END IF;
-          END $$;
-          SQL
-      - name: aplicar os init do painel de verdade (04 + 05, em ordem)
-        run: |
-          for f in 04-skills-registry-prod.sql 05-release-engine-prod.sql; do
-            echo "=== aplicando $f ==="
+          for f in 02-tenant-urban 03-admin-audit-prod 04-skills-registry-prod 05-release-engine-prod; do
+            echo "=== aplicando $f.sql ==="
             psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 \
-                 -f "infra/db/init/$f"
+                 -f "infra/db/init/$f.sql"
           done
-      - name: idempotencia (aplicar 04+05 de novo nao quebra)
+      - name: idempotencia (reaplicar a linhagem inteira nao quebra)
         run: |
-          for f in 04-skills-registry-prod.sql 05-release-engine-prod.sql; do
+          for f in 02-tenant-urban 03-admin-audit-prod 04-skills-registry-prod 05-release-engine-prod; do
             psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 \
-                 -f "infra/db/init/$f"
+                 -f "infra/db/init/$f.sql"
           done
       - name: as tabelas existem?
         run: |
