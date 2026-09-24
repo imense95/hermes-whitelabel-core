@@ -29,12 +29,16 @@ jobs:
       - name: instalar dependencias
         run: |
           pip install -r admin-api/requirements.txt \
-                      -r easypanel-proxy/requirements.txt pytest
+                      -r easypanel-proxy/requirements.txt \
+                      -r release-engine/requirements.txt pytest pytest-asyncio
       - name: testes da Admin API
         working-directory: admin-api
         run: python -m pytest tests/ -q
       - name: testes do EasyPanel Proxy
         working-directory: easypanel-proxy
+        run: python -m pytest tests/ -q
+      - name: testes do Release Engine
+        working-directory: release-engine
         run: python -m pytest tests/ -q
       - name: sintaxe dos scripts
         run: |
