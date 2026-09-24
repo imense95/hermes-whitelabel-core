@@ -3,15 +3,16 @@ Testes da maquina de estados e do classificador. Sem I/O, sem banco.
 
 O foco: provar as invariantes de seguranca do release engine —
 - backup vem antes de aplicar, sempre;
-- health falho reverte na hora (nem entra na janela);
-- deadline sem confirmacao => auto-revert pelo reconciliador (padrao seguro);
+- falha ao aplicar OU health falho reverte na hora (a mudanca nao subiu);
+- SEM relogio: provisoria aguarda aprovacao humana, sem prazo — nada reverte
+  sozinho pelo tempo;
 - confirmar so vale de PROVISORIA, e uma vez;
 - destrutivo classifica como manual (nao entra no automatico).
 """
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -48,8 +49,8 @@ class ExecutorFake:
         self.chamadas.append(f"reverter({backup_ref})")
 
 
-def _rel(tipo="migracao", classe="auto", janela=1800):
-    return m.Release(id=1, tipo=tipo, alvo="urban", classe=classe, janela_seg=janela)
+def _rel(tipo="migracao", classe="auto"):
+    return m.Release(id=1, tipo=tipo, alvo="urban", classe=classe)
 
 
 def _exec(**kw):
@@ -60,38 +61,52 @@ def _exec(**kw):
 
 # --- caminho feliz --------------------------------------------------------
 
-def test_iniciar_leva_a_provisoria_com_relogio():
-    rel = _rel(janela=1800)
+def test_iniciar_leva_a_provisoria_sem_prazo():
+    rel = _rel()
     ex, fake = _exec()
     estado = m.iniciar(rel, ex, ator="herbert", agora=T0)
     assert estado == m.PROVISORIA
     # backup ANTES de aplicar, e verificar depois
     assert fake.chamadas == ["backup", "aplicar", "verificar"]
-    assert rel.provisoria_em == T0
-    assert rel.deadline == T0 + timedelta(seconds=1800)
+    assert rel.aguardando_desde == T0
     assert rel.health_ok is True
+    # NAO existe deadline nem janela: nenhum relogio corre
+    assert not hasattr(rel, "deadline")
+    assert not hasattr(rel, "janela_seg")
 
 
-def test_confirmar_dentro_da_janela_consolida():
+def test_confirmar_consolida():
     rel = _rel()
     ex, fake = _exec()
     m.iniciar(rel, ex, ator="herbert", agora=T0)
-    estado = m.confirmar(rel, ex, operador="herbert")
+    estado = m.confirmar(rel, operador="herbert")
     assert estado == m.CONSOLIDADA
     assert rel.confirmada_por == "herbert"
+    assert rel.confirmada_em is not None
     # consolidar NAO chama reverter
     assert not any("reverter" in c for c in fake.chamadas)
 
 
-# --- padrao seguro: reverter ---------------------------------------------
+def test_reverter_humano():
+    rel = _rel()
+    ex, fake = _exec()
+    m.iniciar(rel, ex, ator="herbert", agora=T0)
+    estado = m.reverter(rel, ex, "backup-ref-123", ator="herbert", motivo="humano")
+    assert estado == m.REVERTIDA
+    assert rel.reverter_motivo == "humano"
+    assert rel.revertida_em is not None
+    assert fake.chamadas[-1] == "reverter(backup-ref-123)"
 
-def test_health_falho_reverte_na_hora_sem_entrar_na_janela():
+
+# --- padrao seguro: reverter quando a aplicacao nao sobe ------------------
+
+def test_health_falho_reverte_na_hora():
     rel = _rel()
     ex, fake = _exec(health=False)
     estado = m.iniciar(rel, ex, ator="herbert", agora=T0)
     assert estado == m.REVERTIDA
     assert rel.reverter_motivo == "health"
-    assert rel.deadline is None          # nunca entrou na janela
+    assert rel.aguardando_desde is None          # nunca entrou em provisoria
     assert fake.chamadas == ["backup", "aplicar", "verificar", "reverter(backup-ref-123)"]
 
 
@@ -105,71 +120,30 @@ def test_falha_ao_aplicar_reverte():
     assert fake.chamadas[-1] == "reverter(backup-ref-123)"
 
 
-def test_reconciliador_reverte_no_deadline_sem_confirmacao():
-    """O coracao: passou o deadline, ninguem confirmou -> auto-revert."""
-    rel = _rel(janela=1800)
-    ex, fake = _exec()
-    m.iniciar(rel, ex, ator="herbert", agora=T0)
-
-    # 1s antes do deadline: reconciliador nao faz nada
-    quase = T0 + timedelta(seconds=1799)
-    assert m.reconciliar(rel, ex, "backup-ref-123", agora=quase) is None
-    assert rel.estado == m.PROVISORIA
-
-    # no deadline: reverte
-    depois = T0 + timedelta(seconds=1800)
-    estado = m.reconciliar(rel, ex, "backup-ref-123", agora=depois)
-    assert estado == m.REVERTIDA
-    assert rel.reverter_motivo == "timeout"
-    assert fake.chamadas[-1] == "reverter(backup-ref-123)"
-
-
-def test_reconciliador_nao_reverte_se_ja_confirmada():
-    rel = _rel()
-    ex, fake = _exec()
-    m.iniciar(rel, ex, ator="herbert", agora=T0)
-    m.confirmar(rel, ex, operador="herbert")
-    # muito depois do que seria o deadline: nada acontece, ja consolidou
-    tarde = T0 + timedelta(days=1)
-    assert m.reconciliar(rel, ex, "backup-ref-123", agora=tarde) is None
-    assert rel.estado == m.CONSOLIDADA
-
-
-def test_segundos_restantes_conta_do_servidor():
-    rel = _rel(janela=1800)
-    ex, _ = _exec()
-    m.iniciar(rel, ex, ator="herbert", agora=T0)
-    assert rel.segundos_restantes(agora=T0 + timedelta(seconds=600)) == 1200
-    assert rel.segundos_restantes(agora=T0 + timedelta(seconds=5000)) == 0  # nunca negativo
-
-
 # --- transicoes ilegais ---------------------------------------------------
 
 def test_nao_consolida_o_que_nao_esta_provisorio():
     rel = _rel()
-    ex, _ = _exec()
     with pytest.raises(m.TransicaoInvalida):
-        m.confirmar(rel, ex, operador="herbert")   # ainda em 'solicitada'
+        m.confirmar(rel, operador="herbert")   # ainda em 'solicitada'
 
 
 def test_nao_confirma_duas_vezes():
     rel = _rel()
     ex, _ = _exec()
     m.iniciar(rel, ex, ator="herbert", agora=T0)
-    m.confirmar(rel, ex, operador="herbert")
+    m.confirmar(rel, operador="herbert")
     with pytest.raises(m.TransicaoInvalida):
-        m.confirmar(rel, ex, operador="herbert")    # ja consolidada
+        m.confirmar(rel, operador="herbert")    # ja consolidada
 
 
-def test_janela_curta_imagem_vs_longa_migracao():
-    """Regra: imagem = 1800s (30min); migracao aditiva = longa."""
-    img = _rel(tipo="imagem", janela=1800)
-    mig = _rel(tipo="migracao", janela=6 * 3600)
+def test_nao_reverte_o_que_ja_e_terminal():
+    rel = _rel()
     ex, _ = _exec()
-    m.iniciar(img, ex, ator="h", agora=T0)
-    m.iniciar(mig, ex, ator="h", agora=T0)
-    assert img.deadline == T0 + timedelta(minutes=30)
-    assert mig.deadline == T0 + timedelta(hours=6)
+    m.iniciar(rel, ex, ator="herbert", agora=T0)
+    m.confirmar(rel, operador="herbert")
+    with pytest.raises(m.TransicaoInvalida):
+        m.reverter(rel, ex, "backup-ref-123", ator="herbert")  # consolidada nao reverte
 
 
 # --- gate da taxonomia (classificador) ------------------------------------

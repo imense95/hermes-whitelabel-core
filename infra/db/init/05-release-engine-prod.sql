@@ -1,12 +1,12 @@
 -- infra/db/init/05-release-engine-prod.sql
--- Release engine: aplicacao segura com janela de confirmacao (canary).
+-- Release engine: aplicacao segura com aprovacao humana (canary).
 -- Schema central platform, banco 'plataforma'. Idempotente.
 --
 -- Uma release passa por: solicitada -> backup -> aplicando -> verificando ->
--- provisoria (relogio server-side) -> {consolidada | revertida}. O padrao
--- seguro e' REVERTER: sem confirmacao ate o deadline, um reconciliador
--- server-side reverte e avisa. O relogio e' o campo `deadline` aqui — NAO
--- depende do navegador do humano estar aberto.
+-- provisoria -> {consolidada | revertida}. NAO ha relogio de auto-reversao:
+-- em 'provisoria' a release aguarda aprovacao humana SEM prazo. So acao humana
+-- (aprovar ou reverter) tira dela desse estado. A unica reversao automatica e'
+-- quando aplicar/verificar falha (a mudanca nao subiu) -> volta ao backup.
 
 -- ------------------------------------------------------------------------
 -- Estados e tipos, como CHECK (nao enum: adicionar valor a enum exige lock;
@@ -31,34 +31,32 @@ CREATE TABLE IF NOT EXISTS platform.release (
     -- referencias do que aplicar e como desfazer (a assimetria imagem/banco)
     payload_ref   text,        -- migracao: caminho do .sql; imagem: tag nova
     backup_ref    text,        -- migracao: caminho do pg_dump; imagem: tag anterior
-    health_ok     boolean,     -- resultado do health check pos-aplicacao
+    health_ok     boolean,     -- resultado da verificacao pos-aplicacao
 
-    -- o relogio. deadline e' server-side; o reconciliador compara com now().
-    janela_seg    integer NOT NULL,       -- 1800 p/ imagem; longo p/ migracao
-    provisoria_em timestamptz,
-    deadline      timestamptz,            -- provisoria_em + janela_seg
+    -- SEM relogio: provisoria aguarda aprovacao humana sem prazo.
+    aguardando_desde timestamptz,         -- quando entrou em provisoria
 
     -- quem/quando de cada transicao humana
     solicitada_por text NOT NULL,
     confirmada_por text,
     confirmada_em  timestamptz,
     revertida_em   timestamptz,
-    reverter_motivo text,                 -- 'humano' | 'timeout' | 'health'
+    reverter_motivo text,                 -- 'humano' | 'health' | 'aplicacao'
 
     criado_em     timestamptz NOT NULL DEFAULT now(),
     atualizado_em timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS release_estado_idx ON platform.release (estado, deadline);
+CREATE INDEX IF NOT EXISTS release_estado_idx ON platform.release (estado);
 
--- No maximo UMA release provisoria por alvo: duas janelas correndo no mesmo
+-- No maximo UMA release em andamento por alvo: duas ao mesmo tempo no mesmo
 -- schema/servico e' ambiguo (qual backup vale?). Garantido no banco.
-CREATE UNIQUE INDEX IF NOT EXISTS release_uma_provisoria_por_alvo_idx
+CREATE UNIQUE INDEX IF NOT EXISTS release_uma_em_andamento_por_alvo_idx
     ON platform.release (tipo, alvo)
     WHERE estado IN ('backup','aplicando','verificando','provisoria');
 
 COMMENT ON TABLE platform.release IS
-  'Canary de aplicacao segura. Uma release fica provisoria com relogio server-side; sem confirmacao ate deadline, o reconciliador reverte. Padrao seguro = reverter.';
+  'Canary de aplicacao segura. Uma release fica provisoria aguardando aprovacao humana (sem prazo). Reversao automatica so quando aplicar/verificar falha. Confirmar e reverter sao acoes humanas.';
 
 -- ------------------------------------------------------------------------
 -- Trilha imutavel de cada transicao (append-only, para depurar auto-reverts).
