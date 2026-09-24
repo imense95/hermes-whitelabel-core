@@ -1,14 +1,13 @@
 """
-Testes da camada HTTP do release engine. TestClient + executor fake.
+Testes da camada HTTP do release engine. TestClient + executor fake + RepoMemoria.
 Cobrem: auth, classificacao no POST, o fluxo apply->confirm, apply->revert,
-o gate 'manual', e o reconciliador via _tick direto (sem background real).
+o gate 'manual', a reversao automatica quando health falha, e a linguagem de
+negocio nas mensagens (sem jargao tecnico).
 """
 from __future__ import annotations
 
 import hashlib
-import os
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -23,13 +22,13 @@ OPERADOR = "herbert@assessoria"
 @pytest.fixture()
 def cli(monkeypatch):
     monkeypatch.setenv("RELEASE_API_TOKEN_SHA256", hashlib.sha256(TOKEN.encode()).hexdigest())
-    monkeypatch.setenv("RELEASE_NO_BACKGROUND", "1")   # sem loop; chamamos _tick
     monkeypatch.setenv("RELEASE_TELEGRAM_BOT_TOKEN", "")   # notificacao silenciosa
-    for mod in [k for k in list(sys.modules) if k in ("app",)]:
-        del sys.modules[mod]
+    monkeypatch.delenv("RELEASE_DSN", raising=False)       # forca RepoMemoria
+    for mod in ("app",):
+        sys.modules.pop(mod, None)
     import app as mod  # noqa: PLC0415
-    # zera o repo entre testes
-    mod.REPO = mod.RepoMemoria()
+    mod.REPO = mod.repo_mod.RepoMemoria()
+    mod.EXECUTORES = mod.RegistroExecutores()
     return TestClient(mod.app), mod
 
 
@@ -60,6 +59,17 @@ class ExecutorFake:
         self.chamadas.append(f"reverter({ref})")
 
 
+def _plugar_executor(mod, rid, fake):
+    """Substitui o montar() do registro para devolver o fake desta release."""
+    ex = fake.como_executor(mod)
+
+    def _montar(rel):
+        wrapped = mod.EXECUTORES._wrap(rel, ex)
+        mod.EXECUTORES._por_release[rel.id] = wrapped
+        return wrapped
+    mod.EXECUTORES.montar = _montar
+
+
 # --- auth -----------------------------------------------------------------
 
 def test_sem_token_nega(cli):
@@ -82,7 +92,7 @@ def test_health_publico(cli):
 def test_cria_migracao_aditiva_como_auto(cli):
     c, _ = cli
     r = c.post("/v1/releases", json={
-        "tipo": "migracao", "alvo": "urban", "descricao": "add tabela",
+        "tipo": "migracao", "alvo": "urban", "descricao": "Nova area de skills",
         "sql": "CREATE TABLE x(a int); ALTER TABLE x ADD COLUMN b text;"}, headers=h())
     assert r.status_code == 200
     assert r.json()["classe"] == "auto"
@@ -92,7 +102,7 @@ def test_cria_migracao_aditiva_como_auto(cli):
 def test_cria_migracao_destrutiva_como_manual(cli):
     c, _ = cli
     r = c.post("/v1/releases", json={
-        "tipo": "migracao", "alvo": "urban", "descricao": "drop",
+        "tipo": "migracao", "alvo": "urban", "descricao": "Remocao",
         "sql": "DROP TABLE x;"}, headers=h())
     assert r.json()["classe"] == "manual"
     assert r.json()["pode_auto_aplicar"] is False
@@ -106,28 +116,30 @@ def test_migracao_sem_sql_nega(cli):
     assert r.status_code == 400
 
 
-def test_imagem_e_sempre_auto_com_janela_30min(cli):
+def test_imagem_e_sempre_auto(cli):
     c, _ = cli
     r = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
-                                     "descricao": "deploy sha-abc"}, headers=h())
+                                     "descricao": "Nova versao do app"}, headers=h())
     assert r.json()["classe"] == "auto"
-    assert r.json()["janela_seg"] == 30 * 60
+    # sem relogio: nada de janela_seg na resposta
+    assert "janela_seg" not in r.json()
+    assert "deadline" not in r.json()
 
 
 # --- fluxo apply -> confirm -----------------------------------------------
 
-def test_apply_entra_em_provisoria_e_confirm_consolida(cli):
+def test_apply_entra_em_provisoria_sem_prazo_e_confirm_consolida(cli):
     c, mod = cli
-    r = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
-                                     "descricao": "deploy"}, headers=h())
-    rid = r.json()["id"]
+    rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
+                                       "descricao": "deploy"}, headers=h()).json()["id"]
     fake = ExecutorFake()
-    mod.REPO.set_exec(rid, fake.como_executor(mod))
+    _plugar_executor(mod, rid, fake)
 
     r2 = c.post(f"/v1/releases/{rid}/apply", headers=h())
     assert r2.status_code == 200
     assert r2.json()["estado"] == "provisoria"
-    assert r2.json()["segundos_restantes"] > 0
+    assert r2.json()["aguardando_desde"] is not None
+    assert "segundos_restantes" not in r2.json()   # sem relogio
 
     r3 = c.post(f"/v1/releases/{rid}/confirm", headers=h())
     assert r3.json()["estado"] == "consolidada"
@@ -140,21 +152,32 @@ def test_apply_health_falho_reverte(cli):
     rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
                                        "descricao": "deploy"}, headers=h()).json()["id"]
     fake = ExecutorFake(health=False)
-    mod.REPO.set_exec(rid, fake.como_executor(mod))
+    _plugar_executor(mod, rid, fake)
     r = c.post(f"/v1/releases/{rid}/apply", headers=h())
     assert r.json()["estado"] == "revertida"
     assert r.json()["reverter_motivo"] == "health"
+    assert "reverter(bk-1)" in fake.chamadas
 
 
-def test_apply_manual_e_recusado(cli):
+def test_apply_manual_e_recusado_com_linguagem_de_negocio(cli):
     c, mod = cli
     rid = c.post("/v1/releases", json={"tipo": "migracao", "alvo": "urban",
-                                       "descricao": "drop", "sql": "DROP TABLE x;"},
+                                       "descricao": "Remocao", "sql": "DROP TABLE x;"},
                  headers=h()).json()["id"]
-    mod.REPO.set_exec(rid, ExecutorFake().como_executor(mod))
     r = c.post(f"/v1/releases/{rid}/apply", headers=h())
     assert r.status_code == 409
-    assert "expand/contract" in r.json()["detail"]
+    # mensagem sem jargao: nao fala 'expand/contract' cru pro operador
+    assert "tratamento manual" in r.json()["detail"]
+
+
+def test_apply_duas_vezes_recusa(cli):
+    c, mod = cli
+    rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
+                                       "descricao": "d"}, headers=h()).json()["id"]
+    _plugar_executor(mod, rid, ExecutorFake())
+    c.post(f"/v1/releases/{rid}/apply", headers=h())
+    r = c.post(f"/v1/releases/{rid}/apply", headers=h())
+    assert r.status_code == 409
 
 
 def test_revert_humano(cli):
@@ -162,7 +185,7 @@ def test_revert_humano(cli):
     rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
                                        "descricao": "d"}, headers=h()).json()["id"]
     fake = ExecutorFake()
-    mod.REPO.set_exec(rid, fake.como_executor(mod))
+    _plugar_executor(mod, rid, fake)
     c.post(f"/v1/releases/{rid}/apply", headers=h())
     r = c.post(f"/v1/releases/{rid}/revert", headers=h())
     assert r.json()["estado"] == "revertida"
@@ -170,41 +193,26 @@ def test_revert_humano(cli):
     assert "reverter(bk-1)" in fake.chamadas
 
 
-# --- reconciliador (relogio server-side) ----------------------------------
+# --- persistencia dos eventos na trilha -----------------------------------
 
-@pytest.mark.asyncio
-async def test_reconciliador_reverte_release_expirada(cli, monkeypatch):
+def test_trilha_de_eventos_cresce_a_cada_transicao(cli):
     c, mod = cli
     rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
                                        "descricao": "d"}, headers=h()).json()["id"]
-    fake = ExecutorFake()
-    mod.REPO.set_exec(rid, fake.como_executor(mod))
+    _plugar_executor(mod, rid, ExecutorFake())
     c.post(f"/v1/releases/{rid}/apply", headers=h())
-
-    rel = mod.REPO.get(rid)
-    assert rel.estado == "provisoria"
-    # força o deadline para o passado (relogio do servidor)
-    rel.deadline = rel.deadline - timedelta(hours=1)
-
-    avisos = []
-    async def fake_notif(t): avisos.append(t)
-    monkeypatch.setattr(mod, "notificar_telegram", fake_notif)
-
-    await mod._tick_reconciliador()
-    assert rel.estado == "revertida"
-    assert rel.reverter_motivo == "timeout"
-    assert "reverter(bk-1)" in fake.chamadas
-    assert avisos and "revertida" in avisos[0].lower()
+    r = c.get(f"/v1/releases/{rid}", headers=h())
+    estados = [e["para"] for e in r.json()["eventos"]]
+    assert estados == ["backup", "aplicando", "verificando", "provisoria"]
 
 
-@pytest.mark.asyncio
-async def test_reconciliador_ignora_release_confirmada(cli):
+# --- mensagem de notificacao usa linguagem de negocio ---------------------
+
+def test_msg_aguardando_nao_tem_jargao(cli):
     c, mod = cli
-    rid = c.post("/v1/releases", json={"tipo": "imagem", "alvo": "hermes-urban",
-                                       "descricao": "d"}, headers=h()).json()["id"]
-    fake = ExecutorFake()
-    mod.REPO.set_exec(rid, fake.como_executor(mod))
-    c.post(f"/v1/releases/{rid}/apply", headers=h())
-    c.post(f"/v1/releases/{rid}/confirm", headers=h())
-    await mod._tick_reconciliador()   # nao deve reverter
-    assert mod.REPO.get(rid).estado == "consolidada"
+    rel = mod.m.Release(id=9, tipo="migracao", alvo="urban", classe="auto",
+                        descricao="Nova area de skills")
+    msg = mod._msg_aguardando(rel)
+    for jargao in ("schema", "tag", "deadline", "sha-", "pg_dump", "psql"):
+        assert jargao not in msg.lower()
+    assert "aprova" in msg.lower()

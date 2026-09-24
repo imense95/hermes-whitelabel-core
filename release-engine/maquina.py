@@ -1,13 +1,17 @@
 """
 Maquina de estados do release engine — logica PURA, sem I/O.
 
-Separada de propósito do banco e do EasyPanel: aqui vivem as regras que
-precisam ser provadas com testes rapidos e deterministicos:
+Regra do produto (decisao do Herbert): NAO existe relogio de auto-reversao.
+Uma release aplicada com sucesso entra em 'provisoria' e AGUARDA aprovacao
+humana, sem prazo. Nada consolida e nada reverte sozinho pelo tempo — so por
+acao humana (confirmar ou reverter). A unica reversao automatica e' quando a
+propria aplicacao falha ou o health check nao passa: nesse caso a mudanca nao
+subiu de verdade, entao voltamos ao backup na hora. Isso nao e' um relogio.
 
+Aqui vivem as regras que precisam ser provadas com testes deterministicos:
   - a ordem legal das transicoes (nao da' para consolidar o que nao esta
     provisorio; nao da' para confirmar duas vezes);
-  - o relogio: dado `agora` e o `deadline`, decidir se a release expirou;
-  - o PADRAO SEGURO: expirou sem confirmacao => reverter, nunca manter;
+  - o PADRAO SEGURO na aplicacao: aplicar falhou ou health falhou => reverter;
   - o gate da taxonomia: classe 'manual' nao entra no fluxo automatico.
 
 O ator real (dump, psql, deploy) e' injetado como callables — o executor de
@@ -17,7 +21,7 @@ nao sabe (nem precisa saber) a diferenca entre migracao e imagem.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable
 
 # Estados
@@ -25,7 +29,7 @@ SOLICITADA = "solicitada"
 BACKUP = "backup"
 APLICANDO = "aplicando"
 VERIFICANDO = "verificando"
-PROVISORIA = "provisoria"
+PROVISORIA = "provisoria"      # aplicada, aguardando aprovacao humana (SEM prazo)
 CONSOLIDADA = "consolidada"
 REVERTIDA = "revertida"
 FALHA = "falha"
@@ -38,7 +42,7 @@ _LEGAIS: dict[str, frozenset[str]] = {
     BACKUP: frozenset({APLICANDO, FALHA}),
     APLICANDO: frozenset({VERIFICANDO, REVERTIDA, FALHA}),
     VERIFICANDO: frozenset({PROVISORIA, REVERTIDA, FALHA}),  # health falha -> reverte
-    PROVISORIA: frozenset({CONSOLIDADA, REVERTIDA}),          # humano ou relogio
+    PROVISORIA: frozenset({CONSOLIDADA, REVERTIDA}),          # so acao humana
     CONSOLIDADA: frozenset(),
     REVERTIDA: frozenset(),
     FALHA: frozenset(),
@@ -69,36 +73,32 @@ class Release:
     tipo: str                 # 'migracao' | 'imagem'
     alvo: str
     classe: str               # 'auto' | 'manual'
-    janela_seg: int
     estado: str = SOLICITADA
-    provisoria_em: datetime | None = None
-    deadline: datetime | None = None
+    aguardando_desde: datetime | None = None   # quando entrou em provisoria
     health_ok: bool | None = None
     confirmada_por: str | None = None
-    reverter_motivo: str | None = None
+    confirmada_em: datetime | None = None
+    revertida_em: datetime | None = None
+    reverter_motivo: str | None = None         # 'humano' | 'health' | 'aplicacao'
     eventos: list[tuple[str, str, str]] = field(default_factory=list)  # (para, ator, detalhe)
+    # --- metadados carregados/persistidos (a maquina nao os usa na logica) ---
+    descricao: str = ""
+    solicitada_por: str = ""
+    payload_ref: str | None = None     # migracao: caminho do .sql; imagem: tag nova
+    backup_ref: str | None = None      # migracao: caminho do dump; imagem: tag anterior
+    motivos: list[str] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)
+    eventos_persistidos: int = 0       # quantos eventos ja foram gravados
 
     def _ir(self, para: str, ator: str, detalhe: str = "") -> None:
         exige_transicao(self.estado, para)
         self.estado = para
         self.eventos.append((para, ator, detalhe))
 
-    # --- relogio -----------------------------------------------------------
-    def expirada(self, agora: datetime | None = None) -> bool:
-        """True se esta provisoria e o deadline passou. Base do auto-revert."""
-        if self.estado != PROVISORIA or self.deadline is None:
-            return False
-        return (agora or _agora()) >= self.deadline
-
-    def segundos_restantes(self, agora: datetime | None = None) -> int | None:
-        if self.estado != PROVISORIA or self.deadline is None:
-            return None
-        return max(0, int((self.deadline - (agora or _agora())).total_seconds()))
-
 
 @dataclass
 class Executor:
-    """Interface do ator real. banco e imagem implementam estes 3 callables.
+    """Interface do ator real. banco e imagem implementam estes 4 callables.
 
     Cada um devolve uma referencia (str) ou levanta em caso de falha.
     """
@@ -113,11 +113,11 @@ def iniciar(rel: Release, executor: Executor, ator: str,
     """Executa backup -> aplica -> verifica -> provisoria (ou reverte).
 
     GATE DA TAXONOMIA: classe 'manual' nunca entra aqui sem aprovacao previa —
-    o chamador so chama iniciar() depois que um humano aprovou o manual. Se a
-    classe e' 'manual' e ninguem aprovou, e' erro de programacao: recusamos.
+    o chamador so chama iniciar() depois que um humano aprovou o manual.
 
-    Devolve o estado final desta fase: PROVISORIA (sucesso, relogio correndo),
-    REVERTIDA (health falhou -> auto-revert imediato) ou FALHA.
+    Devolve o estado final desta fase: PROVISORIA (sucesso, aguardando aprovacao
+    humana sem prazo), REVERTIDA (aplicar/health falhou -> voltou ao backup na
+    hora) ou FALHA.
     """
     agora = agora or _agora()
 
@@ -136,46 +136,34 @@ def iniciar(rel: Release, executor: Executor, ator: str,
         return rel.estado
 
     # health check
-    rel._ir(VERIFICANDO, ator, "health check pos-aplicacao")
+    rel._ir(VERIFICANDO, ator, "verificacao de saude pos-aplicacao")
     rel.health_ok = bool(executor.verificar_saude())
     if not rel.health_ok:
-        # PADRAO SEGURO: health falhou -> reverte na hora, nem entra na janela
-        rel._ir(REVERTIDA, ator, "health check falhou -> auto-revert")
+        # PADRAO SEGURO: nao passou -> volta ao backup na hora (nao e' relogio)
+        rel._ir(REVERTIDA, ator, "verificacao falhou -> voltou ao backup")
         rel.reverter_motivo = "health"
         executor.reverter(backup_ref)
         return rel.estado
 
-    # entra em provisoria: o relogio comeca AGORA (server-side)
-    rel.provisoria_em = agora
-    rel.deadline = agora + timedelta(seconds=rel.janela_seg)
-    rel._ir(PROVISORIA, ator, f"provisoria; deadline em {rel.janela_seg}s")
+    # entra em provisoria: aguarda aprovacao humana, SEM prazo
+    rel.aguardando_desde = agora
+    rel._ir(PROVISORIA, ator, "aplicada; aguardando aprovacao humana")
     return rel.estado
 
 
-def confirmar(rel: Release, executor: Executor, operador: str) -> str:
-    """Humano confirmou dentro da janela -> consolida. Idempotencia: so de PROVISORIA."""
-    rel._ir(CONSOLIDADA, operador, "confirmada pelo humano dentro da janela")
+def confirmar(rel: Release, operador: str) -> str:
+    """Humano aprovou -> consolida. So de PROVISORIA (transicao valida garante)."""
+    rel._ir(CONSOLIDADA, operador, "aprovada pelo humano")
     rel.confirmada_por = operador
+    rel.confirmada_em = _agora()
     return rel.estado
 
 
 def reverter(rel: Release, executor: Executor, backup_ref: str,
-             ator: str, motivo: str) -> str:
-    """Reverte uma release provisoria para o backup. motivo: 'humano'|'timeout'."""
+             ator: str, motivo: str = "humano") -> str:
+    """Reverte uma release provisoria para o backup. motivo: 'humano' (padrao)."""
     rel._ir(REVERTIDA, ator, f"revertida ({motivo})")
     rel.reverter_motivo = motivo
+    rel.revertida_em = _agora()
     executor.reverter(backup_ref)
     return rel.estado
-
-
-def reconciliar(rel: Release, executor: Executor, backup_ref: str,
-                agora: datetime | None = None) -> str | None:
-    """O coracao do padrao seguro, chamado em loop pelo servidor.
-
-    Se a release esta provisoria e o deadline passou SEM confirmacao, reverte
-    automaticamente. Independe do navegador do humano. Devolve o novo estado se
-    agiu, ou None se nada a fazer.
-    """
-    if rel.expirada(agora):
-        return reverter(rel, executor, backup_ref, ator="reconciliador", motivo="timeout")
-    return None

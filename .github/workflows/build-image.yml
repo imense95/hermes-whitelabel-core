@@ -111,8 +111,71 @@ jobs:
         working-directory: client-ui
         run: test -f dist/index.html && echo "dist/index.html ok" || { echo "::error::build nao gerou dist/index.html"; exit 1; }
 
+  # Buraco fechado (parte 2): ate aqui o SQL so era PARSEADO (pglast). Agora
+  # ele e' APLICADO DE VERDADE num Postgres 16 real — pega erro semantico que
+  # o parser nao ve: coluna/tipo/constraint que nao casa, grant em objeto
+  # inexistente, ordem de dependencia. E roda os testes do RepoPostgres contra
+  # esse banco, provando que o codigo Python casa com o schema.
+  sql-real:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testpw
+          POSTGRES_DB: plataforma
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPASSWORD: testpw
+      RELEASE_TEST_DSN: postgresql://postgres:testpw@localhost:5432/plataforma
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: cliente do Postgres
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+      - name: pre-requisitos (schema + role que os init assumem)
+        run: |
+          psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS platform;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='platform_panel') THEN
+              CREATE ROLE platform_panel;
+            END IF;
+          END $$;
+          SQL
+      - name: aplicar os init do painel de verdade (04 + 05, em ordem)
+        run: |
+          for f in 04-skills-registry-prod.sql 05-release-engine-prod.sql; do
+            echo "=== aplicando $f ==="
+            psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 \
+                 -f "infra/db/init/$f"
+          done
+      - name: idempotencia (aplicar 04+05 de novo nao quebra)
+        run: |
+          for f in 04-skills-registry-prod.sql 05-release-engine-prod.sql; do
+            psql -h localhost -U postgres -d plataforma -v ON_ERROR_STOP=1 \
+                 -f "infra/db/init/$f"
+          done
+      - name: as tabelas existem?
+        run: |
+          psql -h localhost -U postgres -d plataforma -c "\dt platform.*" \
+            | grep -q "release" || { echo "::error::platform.release nao criada"; exit 1; }
+      - name: testes do RepoPostgres contra o banco real
+        working-directory: release-engine
+        run: |
+          pip install -r requirements.txt pytest
+          python -m pytest tests/test_repo_postgres.py -v
+
   imagem:
-    needs: [testes, frontend]
+    needs: [testes, frontend, sql-real]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
