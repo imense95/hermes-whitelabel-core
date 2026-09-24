@@ -168,7 +168,8 @@ async def notificar_telegram(texto: str) -> None:
 
 
 def _link(rid: int) -> str:
-    return f"{PANEL_BASE_URL}/releases/{rid}" if PANEL_BASE_URL else f"(painel)/releases/{rid}"
+    # Aponta para a pagina da mudanca no painel (rota amigavel, sem jargao).
+    return f"{PANEL_BASE_URL}/mudancas/{rid}" if PANEL_BASE_URL else f"(painel)/mudancas/{rid}"
 
 
 def _msg_aguardando(rel: m.Release) -> str:
@@ -335,6 +336,27 @@ def primeira_carga(op: Operador = Depends(autenticar)) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "servico": "release-engine"}
+
+
+@app.get("/v1/base/status")
+def base_status(op: Operador = Depends(autenticar)) -> dict[str, bool]:
+    """A base do painel ja existe? A tela de primeira carga usa isto para decidir
+    se mostra o botao de criar a base ou ja segue para a operacao normal.
+
+    'pronta' = a tabela platform.release existe e responde. Sem DSN (dev), a
+    base em memoria esta sempre pronta.
+    """
+    dsn = os.environ.get("RELEASE_DSN", "")
+    if not dsn:
+        return {"pronta": True}
+    import psycopg  # noqa: PLC0415
+    try:
+        with psycopg.connect(dsn) as con, con.cursor() as cur:
+            cur.execute("SELECT to_regclass('platform.release') IS NOT NULL")
+            (existe,) = cur.fetchone()
+        return {"pronta": bool(existe)}
+    except Exception:  # noqa: BLE001 — banco fora do ar = base nao pronta
+        return {"pronta": False}
 
 
 if __name__ == "__main__":

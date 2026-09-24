@@ -216,3 +216,12 @@ def test_msg_aguardando_nao_tem_jargao(cli):
     for jargao in ("schema", "tag", "deadline", "sha-", "pg_dump", "psql"):
         assert jargao not in msg.lower()
     assert "aprova" in msg.lower()
+
+
+def test_link_telegram_aponta_para_pagina_da_mudanca(cli, monkeypatch):
+    # O link da notificacao vai direto para a pagina da mudanca no painel
+    # (rota amigavel /mudancas/, nao a rota interna /releases/ da API).
+    c, mod = cli
+    monkeypatch.setattr(mod, "PANEL_BASE_URL", "https://painel.exemplo")
+    assert mod._link(42) == "https://painel.exemplo/mudancas/42"
+    assert "/releases/" not in mod._link(42)

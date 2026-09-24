@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens semanticos. Tema claro por padrao; .dark inverte. Canais RGB para o
+   <alpha-value> do Tailwind (ex.: bg-primary/15) funcionar. */
+:root {
+  --background: 247 247 245;
+  --background-50: 255 255 255;
+  --background-100: 240 240 238;
+  --title: 28 25 23;
+  --text-200: 41 37 36;
+  --text-100: 68 64 60;
+  --text-50: 120 113 108;
+  --stroke: 214 211 209;
+  --stroke-light: 231 229 228;
+  --primary: 37 99 235;
+  --primary-hover: 29 78 216;
+  --primary-light: 219 234 254;
+  --ok: 22 163 74;
+  --warn: 202 138 4;
+  --danger: 220 38 38;
+  --panel: 255 255 255;
+}
+.dark {
+  --background: 28 25 23;
+  --background-50: 41 37 36;
+  --background-100: 20 18 17;
+  --title: 250 250 249;
+  --text-200: 231 229 228;
+  --text-100: 214 211 209;
+  --text-50: 168 162 158;
+  --stroke: 68 64 60;
+  --stroke-light: 57 54 51;
+  --primary: 59 130 246;
+  --primary-hover: 96 165 250;
+  --primary-light: 30 58 138;
+  --ok: 34 197 94;
+  --warn: 234 179 8;
+  --danger: 248 113 113;
+  --panel: 41 37 36;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: rgb(var(--background));
+  color: rgb(var(--text-100));
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; /* piso contra overflow horizontal; causa-raiz tratada com min-w-0 */
+}
+
+/* Utilitarios de area segura (notch / barra de gestos). Resolvem 0 em telas
+   sem notch, entao sao seguros no desktop tambem. */
+.pt-safe { padding-top: max(1rem, env(safe-area-inset-top)); }
+.pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.pb-safe-3 { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
