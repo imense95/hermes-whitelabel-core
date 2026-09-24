@@ -395,3 +395,130 @@ def test_plugin_fora_do_catalogo_nega(cli_plugins, ruim):
     assert r.status_code in (400, 404, 422)
     r = c.post("/v1/plugins/install", json={"plugin": "inexistente"}, headers=h())
     assert r.status_code == 404
+
+
+# --- verbo: prepare (skill em profile isolado, sem ativar) ----------------
+
+def test_prepara_skill_em_profile_isolado(cli):
+    """Constroi profiles/<skill>/ com a skill; nao toca o profile default."""
+    c, data, _, _ = cli
+    r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["estado"] == "preparada"
+    assert body["profile"] == "urban-metas"          # default = nome da skill
+    assert body["versao"] == "1.2.0"
+    # skill no PROFILE, nao no default
+    assert (data / "profiles" / "urban-metas" / "skills" / "urban-metas" / "SKILL.md").is_file()
+    assert not (data / "skills" / "urban-metas").exists(), "prepare nao instala no default"
+
+
+def test_prepare_nao_ativa_nao_reinicia(cli):
+    """prepare para ANTES de ativar: nao mexe no config.yaml do default nem sinaliza restart."""
+    c, data, _, _ = cli
+    (data / "config.yaml").write_text("model: x\n", encoding="utf-8")
+    r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    assert r.status_code == 200
+    # o config do DEFAULT continua intocado (ativar e' passo humano)
+    assert (data / "config.yaml").read_text(encoding="utf-8") == "model: x\n"
+    assert "human" in r.json()["observacao"].lower() or "humana" in r.json()["observacao"].lower()
+
+
+def test_prepare_semeia_env_proprio_com_api_server_key(cli):
+    """.env do profile: chaves seed copiadas do default + API_SERVER_KEY gerada."""
+    c, data, _, _ = cli
+    # o .env default do fixture tem OPENROUTER_API_KEY=chave-antiga
+    (data / ".env").write_text(
+        "OPENROUTER_API_KEY=chave-antiga\nGEMINI_API_KEY=g-123\n", encoding="utf-8")
+    r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    assert r.status_code == 200
+    body = r.json()
+    prof_env = (data / "profiles" / "urban-metas" / ".env").read_text(encoding="utf-8")
+    # semeou as duas que existiam no default + gerou a propria
+    assert "OPENROUTER_API_KEY=chave-antiga" in prof_env
+    assert "GEMINI_API_KEY=g-123" in prof_env
+    assert "API_SERVER_KEY=" in prof_env
+    assert "API_SERVER_KEY" in body["credenciais_semeadas"]
+    # resposta nunca vaza valor
+    assert "chave-antiga" not in r.text and "g-123" not in r.text
+
+
+def test_prepare_reporta_credencial_ausente_para_checklist(cli):
+    """As chaves seed que faltam no default viram checklist (credenciais_ausentes)."""
+    c, data, _, _ = cli
+    (data / ".env").write_text("ANTHROPIC_API_KEY=sk-x\n", encoding="utf-8")
+    r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    ausentes = r.json()["credenciais_ausentes"]
+    assert "NANO_BANANA_API_KEY" in ausentes
+    assert "GEMINI_API_KEY" in ausentes
+    assert "ANTHROPIC_API_KEY" not in ausentes  # essa existia
+
+
+def test_prepare_com_plugin_dep_copia_sem_motor_e_habilita_no_profile(cli, tmp_path, monkeypatch):
+    """plugin-dep entra no profile sem motor/ e vira plugins.enabled no config DO PROFILE."""
+    c, data, catalogo, mod = cli
+    pcat = tmp_path / "pcat"
+    (pcat / "marketing" / "motor" / "node_modules").mkdir(parents=True)
+    (pcat / "marketing" / "motor" / "big.js").write_text("//", encoding="utf-8")
+    (pcat / "marketing" / "plugin.yaml").write_text(
+        "name: marketing\nversion: 1.0.0\nprovides_tools:\n  - marketing_config\n", encoding="utf-8")
+    (pcat / "marketing" / "__init__.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "PLUGIN_CATALOG_DIR", pcat)
+
+    r = c.post("/v1/skills/prepare",
+               json={"skill": "urban-metas", "plugin_dep": "marketing"}, headers=h())
+    assert r.status_code == 200, r.text
+    prof = data / "profiles" / "urban-metas"
+    assert (prof / "plugins" / "marketing" / "__init__.py").is_file()
+    assert not (prof / "plugins" / "marketing" / "motor").exists(), "motor fica na imagem"
+    import yaml
+    cfg = yaml.safe_load((prof / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["plugins"]["enabled"] == ["marketing"]
+    assert r.json()["plugin"]["ferramentas"] == ["marketing_config"]
+
+
+def test_prepare_plugin_dep_inexistente_nega(cli):
+    c, *_ = cli
+    r = c.post("/v1/skills/prepare",
+               json={"skill": "urban-metas", "plugin_dep": "nao-existe"}, headers=h())
+    assert r.status_code == 404
+
+
+def test_prepare_skill_fora_do_catalogo_nega(cli):
+    c, *_ = cli
+    assert c.post("/v1/skills/prepare", json={"skill": "fantasma"}, headers=h()).status_code == 404
+
+
+@pytest.mark.parametrize("malicioso", ["../../etc", "a/b", "COM1", ".oculta"])
+def test_prepare_profile_malicioso_nega(cli, malicioso):
+    c, *_ = cli
+    r = c.post("/v1/skills/prepare",
+               json={"skill": "urban-metas", "profile": malicioso}, headers=h())
+    assert r.status_code in (400, 404, 422), malicioso
+
+
+def test_prepare_re_preparo_faz_backup(cli):
+    """Re-preparar guarda a versao anterior como backup (mesma regra do install)."""
+    c, data, _, _ = cli
+    c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+    assert r.status_code == 200
+    backups = list((data / "profiles" / "urban-metas" / "skills").glob(".backup-urban-metas-*"))
+    assert backups
+
+
+def test_prepare_sem_auditoria_e_recusado(cli):
+    """Preparar sem trilha e' pior que preparar que nao aconteceu."""
+    c, data, _, mod = cli
+    original = mod.auditar
+    try:
+        def fake(operador, acao, detalhe, resultado, erro=None, *, obrigatorio):
+            if obrigatorio:
+                from fastapi import HTTPException
+                raise HTTPException(503, "auditoria indisponivel; acao recusada")
+        mod.auditar = fake
+        r = c.post("/v1/skills/prepare", json={"skill": "urban-metas"}, headers=h())
+        assert r.status_code == 503
+        assert not (data / "profiles" / "urban-metas").exists()  # nada escrito
+    finally:
+        mod.auditar = original

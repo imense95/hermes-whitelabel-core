@@ -57,6 +57,7 @@ IP_ALLOWLIST = [x.strip() for x in os.environ.get("ADMIN_API_IP_ALLOWLIST", "").
 # Diretorios que a API pode tocar. Tudo fora disso e' negado por construcao.
 SKILLS_DIR = DATA_DIR / "skills"
 PLUGINS_DIR = DATA_DIR / "plugins"
+PROFILES_DIR = DATA_DIR / "profiles"   # skill universal nasce em profile proprio
 CONFIG_FILE = DATA_DIR / "config.yaml"
 LOGS_DIR = DATA_DIR / "logs"
 ENV_FILE = DATA_DIR / ".env"
@@ -143,7 +144,9 @@ async def autenticar(
 # Auditoria
 # --------------------------------------------------------------------------
 
-AcaoAudit = Literal["skills.list", "skills.install", "logs.read", "status", "credentials.set"]
+AcaoAudit = Literal["skills.list", "skills.install", "skills.prepare",
+                    "plugins.list", "plugins.install",
+                    "logs.read", "status", "credentials.set"]
 
 
 def _audit_fallback(registro: dict[str, Any]) -> None:
@@ -341,6 +344,177 @@ def instalar_skill(body: InstalarSkill, op: Operador = Depends(autenticar)) -> d
 
 
 # --------------------------------------------------------------------------
+# Verbo 2a — preparar skill em profile isolado (NAO ativa)
+# --------------------------------------------------------------------------
+#
+# A regra do produto e': "toda skill universal nasce em profile proprio na
+# instancia". install (verbo 2) copia so para o profile DEFAULT — nao isola.
+# prepare replica a logica do ativar-marketing-profile.sh de forma generica,
+# construindo profiles/<profile>/ com a skill, o plugin-dep e um .env proprio —
+# e PARA ANTES DE ATIVAR. Ativar (reiniciar o gateway para o profile carregar)
+# e' passo HUMANO, fora deste verbo. Estado resultante: "preparada".
+#
+# Isto encaixa no mecanismo de janela de confirmacao: preparar e' reversivel
+# (apagar o dir do profile nao afeta nada em uso), ativar e' a consolidacao.
+
+# Chaves que PODEM ser semeadas de /opt/data/.env para o .env do profile.
+# Diferente de CREDENCIAIS_PERMITIDAS (o que a assessoria pode GRAVAR por HTTP):
+# aqui o valor NUNCA cruza a rede — e' copiado de um arquivo local ja confiavel.
+# Por isso DATABASE_URL entra (o profile precisa do banco), mas continua
+# proibida de ser gravada por /v1/credentials.
+CREDENCIAIS_SEED_PROFILE = {
+    "DATABASE_URL",
+    "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY",
+    "NANO_BANANA_API_KEY",
+    "MARKETING_GOOGLE_CLIENT_ID", "MARKETING_GOOGLE_CLIENT_SECRET",
+}
+
+
+class PrepararSkill(BaseModel):
+    skill: str = Field(min_length=2, max_length=64)
+    # profile onde a skill nasce isolada; default = o proprio nome da skill
+    profile: str | None = Field(default=None, max_length=64)
+    # plugin do qual a skill depende (ex.: marketing-conteudo -> marketing).
+    # vem do skill_meta (Postgres), que a panel-api conhece; a Admin API nao
+    # consulta o catalogo curado, entao recebe por parametro.
+    plugin_dep: str | None = Field(default=None, max_length=64)
+
+    @field_validator("skill")
+    @classmethod
+    def _slug_skill(cls, v: str) -> str:
+        if not SLUG_RE.match(v):
+            raise ValueError("nome de skill invalido")
+        return v
+
+    @field_validator("profile", "plugin_dep")
+    @classmethod
+    def _slug_opt(cls, v: str | None) -> str | None:
+        if v is not None and not SLUG_RE.match(v):
+            raise ValueError("nome invalido")
+        return v
+
+
+def _semear_env_profile(destino_env: Path) -> tuple[list[str], list[str]]:
+    """Cria o .env do profile: chaves seed copiadas do .env default (as que
+    existem) + API_SERVER_KEY propria (cifra o refresh token do Drive; gerada
+    aqui, nunca sai). Idempotente: nao sobrescreve o que ja existe.
+
+    Devolve (semeadas, ausentes) — so NOMES, nunca valores.
+    """
+    default_env = _ler_env()  # /opt/data/.env
+    destino_env.parent.mkdir(parents=True, exist_ok=True)
+    atual: dict[str, str] = {}
+    if destino_env.is_file():
+        for linha in destino_env.read_text(encoding="utf-8", errors="replace").splitlines():
+            linha = linha.strip()
+            if linha and not linha.startswith("#") and "=" in linha:
+                k, _, val = linha.partition("=")
+                atual[k.strip()] = val.strip()
+
+    semeadas, ausentes = [], []
+    for chave in sorted(CREDENCIAIS_SEED_PROFILE):
+        if chave in atual:
+            continue
+        valor = default_env.get(chave)
+        if valor:
+            atual[chave] = valor
+            semeadas.append(chave)
+        else:
+            ausentes.append(chave)
+
+    # chave propria do profile, so se ainda nao houver
+    if "API_SERVER_KEY" not in atual:
+        atual["API_SERVER_KEY"] = secrets.token_hex(32)
+        semeadas.append("API_SERVER_KEY")
+
+    tmp = destino_env.with_suffix(".env.tmp")
+    conteudo = "\n".join(f"{k}={v}" for k, v in sorted(atual.items())) + "\n"
+    tmp.write_text(conteudo, encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, destino_env)
+    return semeadas, ausentes
+
+
+@app.post("/v1/skills/prepare")
+def preparar_skill(body: PrepararSkill, op: Operador = Depends(autenticar)) -> dict[str, Any]:
+    """Prepara uma skill universal em profile isolado, SEM ativar.
+
+    Constroi profiles/<profile>/ com a skill (do catalogo assado), o plugin-dep
+    (sem motor/, do catalogo de plugins) habilitado no config do profile, e um
+    .env proprio. NAO reinicia o gateway: ativar e' passo humano. Reversivel
+    por construcao — apagar o dir do profile desfaz sem tocar nada em uso.
+    """
+    origem = _resolver_skill_no_catalogo(body.skill)
+    if origem is None:
+        auditar(op.nome, "skills.prepare", body.skill, "erro", "skill fora do catalogo", obrigatorio=False)
+        raise HTTPException(404, f"skill '{body.skill}' nao esta no catalogo do produto")
+
+    profile = body.profile or body.skill
+    prof_dir = PROFILES_DIR / profile
+    # confinamento: o profile resolvido tem que ficar sob PROFILES_DIR
+    if not str(prof_dir.resolve()).startswith(str(PROFILES_DIR.resolve()) + os.sep):
+        raise HTTPException(400, "profile fora de profiles/")
+
+    # plugin-dep tem que existir no catalogo ANTES de mexer em qualquer coisa
+    origem_plugin = None
+    if body.plugin_dep:
+        origem_plugin = (PLUGIN_CATALOG_DIR / body.plugin_dep).resolve()
+        if not str(origem_plugin).startswith(str(PLUGIN_CATALOG_DIR.resolve()) + os.sep) \
+           or not (origem_plugin / "plugin.yaml").is_file():
+            auditar(op.nome, "skills.prepare", f"{body.skill}:{body.plugin_dep}", "erro",
+                    "plugin-dep fora do catalogo", obrigatorio=False)
+            raise HTTPException(404, f"plugin '{body.plugin_dep}' nao esta no catalogo do produto")
+
+    skill_dst = prof_dir / "skills" / body.skill
+    ja_preparada = skill_dst.exists()
+
+    # auditar ANTES de escrever: sem trilha, nada acontece
+    auditar(op.nome, "skills.prepare",
+            f"{body.skill} -> profile {profile}"
+            + (f" (+plugin {body.plugin_dep})" if body.plugin_dep else "")
+            + (" [re-preparo]" if ja_preparada else ""),
+            "ok", obrigatorio=True)
+
+    # 1. skill dentro do profile (re-preparo faz backup, como o install)
+    skill_dst.parent.mkdir(parents=True, exist_ok=True)
+    if ja_preparada:
+        backup = prof_dir / "skills" / f".backup-{body.skill}-{int(time.time())}"
+        shutil.move(str(skill_dst), str(backup))
+    shutil.copytree(origem, skill_dst)
+
+    # 2. plugin-dep dentro do profile (sem motor/) + habilita no config do profile
+    plugin_info: dict[str, Any] | None = None
+    if origem_plugin is not None and body.plugin_dep:
+        plugin_dst = prof_dir / "plugins" / body.plugin_dep
+        plugin_dst.parent.mkdir(parents=True, exist_ok=True)
+        if plugin_dst.exists():
+            shutil.move(str(plugin_dst),
+                        str(prof_dir / "plugins" / f".backup-{body.plugin_dep}-{int(time.time())}"))
+        shutil.copytree(origem_plugin, plugin_dst,
+                        ignore=shutil.ignore_patterns(*PLUGIN_NAO_COPIAR))
+        _habilitar_plugin_em(prof_dir / "config.yaml", body.plugin_dep)
+        man = _ler_manifesto(plugin_dst)
+        plugin_info = {"nome": body.plugin_dep, "versao": man.get("version"),
+                       "ferramentas": man.get("provides_tools", [])}
+
+    # 3. .env proprio do profile (seed do default + API_SERVER_KEY propria)
+    semeadas, ausentes = _semear_env_profile(prof_dir / ".env")
+
+    return {
+        "skill": body.skill,
+        "profile": profile,
+        "estado": "preparada",
+        "versao": _ler_versao(skill_dst),
+        "plugin": plugin_info,
+        "credenciais_semeadas": semeadas,   # so nomes, nunca valores
+        "credenciais_ausentes": ausentes,   # o que faltou no .env default (checklist)
+        "observacao": "profile preparado no disco. NAO ativado: reiniciar o "
+                      "gateway para o profile carregar e' acao humana (consolidacao).",
+    }
+
+
+# --------------------------------------------------------------------------
 # Verbo 2b — plugins (mesma regra das skills: so do catalogo assado na imagem)
 # --------------------------------------------------------------------------
 #
@@ -357,8 +531,8 @@ def instalar_skill(body: InstalarSkill, op: Operador = Depends(autenticar)) -> d
 PLUGIN_NAO_COPIAR = {"motor", "node_modules", "__pycache__", "test", "tests"}
 
 
-def _ler_config_yaml() -> dict[str, Any]:
-    """Le config.yaml sem depender de PyYAML completo: so o que precisamos.
+def _ler_config_yaml_de(path: Path) -> dict[str, Any]:
+    """Le um config.yaml sem depender de PyYAML completo: so o que precisamos.
 
     O arquivo e' do Hermes; nao reescrevemos o resto. Se nao existir ou nao
     parsear, tratamos como vazio e criamos so a chave plugins.enabled.
@@ -367,19 +541,23 @@ def _ler_config_yaml() -> dict[str, Any]:
         import yaml  # noqa: PLC0415
     except ImportError:  # pragma: no cover - requirements garantem
         raise HTTPException(500, "PyYAML ausente na Admin API")
-    if not CONFIG_FILE.is_file():
+    if not path.is_file():
         return {}
     try:
-        dados = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        dados = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise HTTPException(500, f"config.yaml ilegivel: {e}")
     return dados if isinstance(dados, dict) else {}
 
 
-def _habilitar_plugin_no_config(nome: str) -> bool:
-    """Garante `plugins.enabled: [..., nome]`. Devolve True se mudou algo."""
+def _ler_config_yaml() -> dict[str, Any]:
+    return _ler_config_yaml_de(CONFIG_FILE)
+
+
+def _habilitar_plugin_em(path: Path, nome: str) -> bool:
+    """Garante `plugins.enabled: [..., nome]` no config em `path`. True se mudou."""
     import yaml  # noqa: PLC0415
-    cfg = _ler_config_yaml()
+    cfg = _ler_config_yaml_de(path)
     plugins = cfg.setdefault("plugins", {})
     if not isinstance(plugins, dict):
         plugins = cfg["plugins"] = {}
@@ -389,11 +567,16 @@ def _habilitar_plugin_no_config(nome: str) -> bool:
     if nome in enabled:
         return False
     plugins["enabled"] = [*enabled, nome]
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CONFIG_FILE.with_suffix(".yaml.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".yaml.tmp")
     tmp.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    os.replace(tmp, CONFIG_FILE)
+    os.replace(tmp, path)
     return True
+
+
+def _habilitar_plugin_no_config(nome: str) -> bool:
+    """Garante `plugins.enabled: [..., nome]` no config do profile default."""
+    return _habilitar_plugin_em(CONFIG_FILE, nome)
 
 
 def _ler_manifesto(plugin_dir: Path) -> dict[str, Any]:

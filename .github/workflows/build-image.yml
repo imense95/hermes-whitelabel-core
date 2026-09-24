@@ -41,9 +41,74 @@ jobs:
           for f in scripts/*.sh infra/scripts/*.sh easypanel-proxy/scripts/*.sh image/s6/*/run; do
             bash -n "$f" && echo "ok: $f"
           done
+      # Buraco fechado: o SQL nunca era validado — um erro de sintaxe num
+      # init/ so aparecia no boot do Postgres em producao. pglast usa o parser
+      # NATIVO do Postgres (libpg_query), entao pega o que um regex nao pega.
+      # So os init/*.sql sao SQL puro do servidor. Os verificar-*.sql sao
+      # scripts de PSQL (tem meta-comandos \set/\echo que o parser do servidor
+      # nao conhece de proposito) — esses sao validados de outra forma abaixo.
+      - name: sintaxe do SQL (parser nativo do Postgres)
+        run: |
+          pip install pglast
+          python - <<'PY'
+          import glob, sys, pglast
+          erros = 0
+          arquivos = sorted(glob.glob("infra/db/init/*.sql"))
+          for f in arquivos:
+              try:
+                  n = len(pglast.parse_sql(open(f, encoding="utf-8").read()))
+                  print(f"ok ({n} stmts): {f}")
+              except pglast.parser.ParseError as e:
+                  print(f"::error file={f}::{e}")
+                  erros += 1
+          print(f"\n{len(arquivos)} init/*.sql, {erros} com erro de sintaxe")
+          sys.exit(1 if erros else 0)
+          PY
+      # Scripts de psql (verificar-*.sql): removem os meta-comandos de cliente
+      # (\set, \echo, \gset) e parseiam o SQL do servidor que sobra.
+      - name: sintaxe dos scripts de psql
+        run: |
+          python - <<'PY'
+          import glob, re, sys, pglast
+          erros = 0
+          for f in sorted(glob.glob("infra/db/verificar-*.sql")):
+              corpo = "\n".join(
+                  "" if re.match(r"\s*\\", ln) else ln
+                  for ln in open(f, encoding="utf-8").read().splitlines()
+              )
+              try:
+                  pglast.parse_sql(corpo)
+                  print(f"ok: {f}")
+              except pglast.parser.ParseError as e:
+                  print(f"::error file={f}::{e}")
+                  erros += 1
+          sys.exit(1 if erros else 0)
+          PY
+
+  # Buraco fechado: o client-ui (front-end do cliente) nunca era buildado no CI
+  # — um bundle quebrado passava verde e so falhava ao assar a imagem (ou pior,
+  # em producao). Agora o build de producao roda em todo push/PR.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: client-ui/package-lock.json
+      - name: instalar dependencias
+        working-directory: client-ui
+        run: npm ci
+      - name: build de producao
+        working-directory: client-ui
+        run: npm run build
+      - name: dist gerado?
+        working-directory: client-ui
+        run: test -f dist/index.html && echo "dist/index.html ok" || { echo "::error::build nao gerou dist/index.html"; exit 1; }
 
   imagem:
-    needs: testes
+    needs: [testes, frontend]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
